@@ -119,6 +119,52 @@ class InstagramAPI:
             logger.error(error_msg)
             raise Exception(error_msg)
     
+    def get_media_list_with_cache(self, access_token, ig_account_id, user_id, limit=25, use_cache=True):
+        """
+        Get list of published media from Instagram account with caching support.
+        
+        Args:
+            access_token: Instagram API access token
+            ig_account_id: Instagram account ID
+            user_id: User ID for cache storage
+            limit: Number of items to fetch
+            use_cache: If True, return cached data if available; if False, force fresh fetch
+        
+        Returns:
+            Tuple of (posts_list, from_cache)
+        """
+        from cache_manager import CacheManager
+        
+        # Try to return cached data if requested
+        if use_cache:
+            cached_posts = CacheManager.get_cached_posts(user_id, limit=limit)
+            if cached_posts:
+                logger.info(f'Returning {len(cached_posts)} posts from cache for user {user_id}')
+                posts_data = [cache.post_data for cache in cached_posts]
+                return posts_data, True
+        
+        # Fetch fresh data from Instagram API
+        try:
+            logger.info(f'Fetching fresh posts from Instagram API for user {user_id}')
+            posts_data = self.get_media_list(access_token, ig_account_id, limit=limit)
+            
+            # Cache the posts
+            CacheManager.cache_posts_batch(user_id, posts_data)
+            
+            return posts_data, False
+        
+        except Exception as e:
+            logger.error(f'Failed to fetch from API: {str(e)}')
+            # Fall back to cache even if use_cache was False
+            cached_posts = CacheManager.get_cached_posts(user_id, limit=limit)
+            if cached_posts:
+                logger.warning(f'Falling back to cached posts after API failure')
+                posts_data = [cache.post_data for cache in cached_posts]
+                return posts_data, True
+            else:
+                # No cache available, re-raise the exception
+                raise
+    
     def create_media_container(self, access_token, ig_account_id, image_url, caption=None, is_carousel_item=False):
         """
         Create a media container for single image or carousel item.

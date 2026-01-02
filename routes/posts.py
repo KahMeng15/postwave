@@ -13,6 +13,13 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in Config.ALLOWED_EXTENSIONS
 
 
+def invalidate_dashboard_cache():
+    """Helper function to invalidate dashboard cache when posts change"""
+    # The frontend will clear localStorage cache on specific operations
+    # This is called after any post modifications to signal the frontend
+    pass
+
+
 @posts_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_posts():
@@ -132,10 +139,14 @@ def create_post():
     
     db.session.commit()
     
-    return jsonify({
+    # Add cache invalidation response header
+    response = jsonify({
         'message': 'Post created successfully',
-        'post': post.to_dict()
-    }), 201
+        'post': post.to_dict(),
+        'invalidate_cache': True
+    })
+    response.headers['X-Invalidate-Dashboard-Cache'] = 'true'
+    return response, 201
 
 
 @posts_bp.route('/<int:post_id>', methods=['PUT'])
@@ -172,10 +183,13 @@ def update_post(post_id):
     
     db.session.commit()
     
-    return jsonify({
+    response = jsonify({
         'message': 'Post updated successfully',
-        'post': post.to_dict()
-    }), 200
+        'post': post.to_dict(),
+        'invalidate_cache': True
+    })
+    response.headers['X-Invalidate-Dashboard-Cache'] = 'true'
+    return response, 200
 
 
 @posts_bp.route('/<int:post_id>', methods=['DELETE'])
@@ -201,7 +215,12 @@ def delete_post(post_id):
     db.session.delete(post)
     db.session.commit()
     
-    return jsonify({'message': 'Post deleted successfully'}), 200
+    response = jsonify({
+        'message': 'Post deleted successfully',
+        'invalidate_cache': True
+    })
+    response.headers['X-Invalidate-Dashboard-Cache'] = 'true'
+    return response, 200
 
 
 @posts_bp.route('/<int:post_id>/publish', methods=['POST'])
@@ -248,10 +267,13 @@ def publish_post_now(post_id):
         
         db.session.commit()
         
-        return jsonify({
+        response = jsonify({
             'message': 'Post published successfully',
-            'post': post.to_dict()
-        }), 200
+            'post': post.to_dict(),
+            'invalidate_cache': True
+        })
+        response.headers['X-Invalidate-Dashboard-Cache'] = 'true'
+        return response, 200
     
     except Exception as e:
         post.status = 'failed'

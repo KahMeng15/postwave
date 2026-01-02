@@ -63,6 +63,14 @@ def create_app(config_class=Config):
         name='Check and publish scheduled posts',
         replace_existing=True
     )
+    scheduler.add_job(
+        func=cleanup_expired_cache,
+        trigger="interval",
+        hours=6,  # Run every 6 hours
+        id='cleanup_cache',
+        name='Clean up expired Instagram cache',
+        replace_existing=True
+    )
     scheduler.start()
     
     # Shut down the scheduler when exiting the app
@@ -184,6 +192,21 @@ def check_scheduled_posts():
             else:
                 # Only commit if no exception occurred
                 db.session.commit()
+
+
+def cleanup_expired_cache():
+    """
+    Background task to clean up expired Instagram cache entries.
+    Runs every 6 hours.
+    """
+    from cache_manager import CacheManager
+    
+    with scheduler_app.app_context():
+        try:
+            deleted_count = CacheManager.clear_expired_cache()
+            scheduler_app.logger.info(f'Cache cleanup: Removed {deleted_count} expired entries')
+        except Exception as e:
+            scheduler_app.logger.error(f'Failed to clean up cache: {str(e)}', exc_info=True)
 
 
 if __name__ == '__main__':

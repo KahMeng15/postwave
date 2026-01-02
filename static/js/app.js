@@ -7,8 +7,21 @@ let selectedFiles = [];
 let currentTheme = localStorage.getItem('theme') || 'light';
 let navbarListenersSetup = false; // Track if navbar listeners are already set up
 
+// Global encryption key for client-side cache
+let encryptionKey = null;
+
 // Initialize
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Initialize encryption for cache (non-blocking)
+    try {
+        if (typeof EncryptedCacheManager !== 'undefined') {
+            encryptionKey = await EncryptedCacheManager.initialize();
+        }
+    } catch (error) {
+        console.warn('Failed to initialize encryption:', error);
+        // Continue anyway - caching will still work on server side
+    }
+    
     initializeTheme();
     initializeRouting();
     setupKeyboardShortcuts();
@@ -270,6 +283,32 @@ function setupViewListeners() {
     const changePasswordForm = document.getElementById('changePasswordForm');
     if (changePasswordForm) changePasswordForm.addEventListener('submit', changePassword);
     
+    // Posts view - refresh button
+    const refreshAllPosts = document.getElementById('refreshAllPosts');
+    const statusFilter = document.getElementById('statusFilter');
+    if (refreshAllPosts) {
+        refreshAllPosts.addEventListener('click', () => {
+            loadAllPosts();
+        });
+    }
+    if (statusFilter) {
+        statusFilter.addEventListener('change', () => {
+            loadAllPosts();
+        });
+    }
+    
+    // Dashboard refresh button
+    const refreshDashboardBtn = document.getElementById('refreshDashboard');
+    if (refreshDashboardBtn) {
+        refreshDashboardBtn.addEventListener('click', refreshDashboardData);
+    }
+    
+    // Instagram refresh button (if exists on Instagram-specific view)
+    const refreshInstagramPostsBtn = document.getElementById('refreshInstagramPosts');
+    if (refreshInstagramPostsBtn) {
+        refreshInstagramPostsBtn.addEventListener('click', refreshInstagramPosts);
+    }
+    
     // Modal
     const modalClose = document.querySelector('.modal-close');
     if (modalClose) modalClose.addEventListener('click', closeModal);
@@ -376,9 +415,8 @@ function toggleTheme() {
 
 function updateThemeIcon() {
     const toggleBtn = document.getElementById('themeToggle');
-    const icon = currentTheme === 'light' ? '🌙' : '☀️';
     const text = currentTheme === 'light' ? 'Dark Mode' : 'Light Mode';
-    toggleBtn.innerHTML = `${icon} ${text}`;
+    toggleBtn.innerHTML = text;
 }
 
 // Drag and Drop Functionality
@@ -609,7 +647,37 @@ async function apiCall(endpoint, options = {}) {
         throw new Error('Unauthorized');
     }
     
+    // Check if response indicates dashboard cache should be invalidated
+    if (response.headers.get('X-Invalidate-Dashboard-Cache') === 'true') {
+        invalidateDashboardCache();
+    }
+    
     return response;
+}
+
+// Cache invalidation function
+function invalidateDashboardCache() {
+    localStorage.removeItem('dashboard_stats');
+    localStorage.removeItem('dashboard_upcoming_posts');
+    // Don't remove Instagram status cache - it's less frequently updated
+    
+    // If dashboard is currently visible, refresh it
+    if (document.getElementById('dashboardView') && document.getElementById('dashboardView').style.display !== 'none') {
+        refreshDashboardData();
+    }
+}
+
+// Refresh dashboard data from server
+async function refreshDashboardData() {
+    try {
+        await checkInstagramStatus();
+        await loadStats();
+        await loadUpcomingPosts();
+        showToast('Dashboard updated', 'success');
+    } catch (error) {
+        console.error('Failed to refresh dashboard:', error);
+        showToast('Failed to update dashboard', 'error');
+    }
 }
 
 // Auth Functions
@@ -734,8 +802,31 @@ async function checkInstagramStatus() {
             return;
         }
         
+        // Try to load from cache first
+        const cachedStatus = localStorage.getItem('dashboard_ig_status');
+        if (cachedStatus) {
+            try {
+                const cached = JSON.parse(cachedStatus);
+                if (cached.connected) {
+                    igNotConnected.style.display = 'none';
+                    igConnected.style.display = 'block';
+                    if (igUsername) igUsername.textContent = cached.instagram_username;
+                    if (igExpiry) igExpiry.textContent = new Date(cached.token_expires_at).toLocaleDateString();
+                } else {
+                    igNotConnected.style.display = 'block';
+                    igConnected.style.display = 'none';
+                }
+            } catch (e) {
+                console.warn('Failed to parse cached status:', e);
+            }
+        }
+        
+        // Update from server in background
         const response = await apiCall('/instagram/status');
         const data = await response.json();
+        
+        // Cache the result
+        localStorage.setItem('dashboard_ig_status', JSON.stringify(data));
         
         if (data.connected) {
             igNotConnected.style.display = 'none';
@@ -763,8 +854,26 @@ async function loadStats() {
             return;
         }
         
+        // Try to load from cache first
+        const cachedStats = localStorage.getItem('dashboard_stats');
+        if (cachedStats) {
+            try {
+                const cached = JSON.parse(cachedStats);
+                statTotal.textContent = cached.total_posts;
+                statScheduled.textContent = cached.scheduled;
+                statPublished.textContent = cached.published;
+                statFailed.textContent = cached.failed;
+            } catch (e) {
+                console.warn('Failed to parse cached stats:', e);
+            }
+        }
+        
+        // Update from server (don't wait for this, let it happen in background)
         const response = await apiCall('/users/stats');
         const data = await response.json();
+        
+        // Cache the result
+        localStorage.setItem('dashboard_stats', JSON.stringify(data));
         
         statTotal.textContent = data.total_posts;
         statScheduled.textContent = data.scheduled;
@@ -784,8 +893,43 @@ async function loadUpcomingPosts() {
             return;
         }
         
+        // Try to load from cache first (don't reset container, just update it)
+        const cachedUpcoming = localStorage.getItem('dashboard_upcoming_posts');
+        if (cachedUpcoming) {
+            try {
+                const cached = JSON.parse(cachedUpcoming);
+                if (cached.posts && cached.posts.length > 0) {
+                    container.innerHTML = cached.posts.map(post => `
+                        <div class="upcoming-post">
+                            ${post.media && post.media.length > 0 ? `
+                                <img src="/api/posts/media/${post.media[0].id}" 
+                                     class="upcoming-post-thumbnail" 
+                                     alt="Post thumbnail">
+                            ` : ''}
+                            <div class="upcoming-post-info">
+                                <div class="upcoming-post-time">
+                                    ${formatDateTime(post.scheduled_time)}
+                                </div>
+                                <div class="upcoming-post-caption">
+                                    ${post.caption || 'No caption'}
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<p class="text-muted">No upcoming posts scheduled.</p>';
+                }
+            } catch (e) {
+                console.warn('Failed to parse cached upcoming posts:', e);
+            }
+        }
+        
+        // Update from server (don't wait for this)
         const response = await apiCall('/posts/upcoming');
         const data = await response.json();
+        
+        // Cache the result
+        localStorage.setItem('dashboard_upcoming_posts', JSON.stringify(data));
         
         if (data.posts.length === 0) {
             container.innerHTML = '<p class="text-muted">No upcoming posts scheduled.</p>';
@@ -832,6 +976,7 @@ async function loadAllPosts() {
     
     try {
         let allPosts = [];
+        let fromCache = false;
         
         // Load PostWave posts
         if (statusFilter !== 'instagram') {
@@ -845,11 +990,21 @@ async function loadAllPosts() {
             }));
         }
         
-        // Load Instagram posts
+        // Load Instagram posts with caching
         if (!statusFilter || statusFilter === 'instagram' || statusFilter === 'published') {
             try {
                 const igResponse = await apiCall('/instagram/posts?limit=25');
                 const igData = await igResponse.json();
+                fromCache = igData.from_cache || false;
+                
+                // Cache posts on client side with encryption
+                if (encryptionKey && igData.posts && typeof EncryptedCacheManager !== 'undefined') {
+                    try {
+                        await EncryptedCacheManager.cachePostsBatch(igData.posts, encryptionKey);
+                    } catch (e) {
+                        console.warn('Failed to cache posts locally:', e);
+                    }
+                }
                 
                 // Get list of instagram_post_ids from PostWave posts to avoid duplicates
                 const postwaveInstagramIds = allPosts
@@ -859,16 +1014,19 @@ async function loadAllPosts() {
                 // Filter out Instagram posts that are already in PostWave
                 const igPosts = igData.posts
                     .filter(post => !postwaveInstagramIds.includes(post.id))
-                    .map(post => ({
-                        id: post.id,
-                        caption: post.caption,
-                        media: [{ id: post.id, url: post.media_url }],
-                        status: 'published',
-                        published_at: post.timestamp,
-                        permalink: post.permalink,
-                        source: 'instagram',
-                        sortTime: new Date(post.timestamp)
-                    }));
+                    .map(post => {
+                        const imageUrl = post.cached_image_url || post.media_url;
+                        return {
+                            id: post.id,
+                            caption: post.caption,
+                            media: [{ id: post.id, url: imageUrl, original_url: post.media_url }],
+                            status: 'published',
+                            published_at: post.timestamp,
+                            permalink: post.permalink,
+                            source: 'instagram',
+                            sortTime: new Date(post.timestamp)
+                        };
+                    });
                 allPosts = [...allPosts, ...igPosts];
             } catch (igError) {
                 console.log('Could not load Instagram posts:', igError);
@@ -885,7 +1043,15 @@ async function loadAllPosts() {
             return;
         }
         
-        container.innerHTML = allPosts.map(post => {
+        // Add cache note if showing Instagram posts
+        let cacheNote = '';
+        if (fromCache && (!statusFilter || statusFilter === 'instagram' || statusFilter === 'published')) {
+            cacheNote = `<div class="cache-info" style="padding: 0.75rem; margin-bottom: 1rem; background: #E0F2FE; border-left: 4px solid #0284C7; border-radius: 4px; grid-column: 1 / -1;">
+                <span style="color: #0C4A6E; font-size: 0.875rem;">📦 Instagram posts loaded from cache (updated ${new Date().toLocaleTimeString()})</span>
+            </div>`;
+        }
+        
+        container.innerHTML = cacheNote + allPosts.map(post => {
             const isInstagram = post.source === 'instagram';
             const cardClass = isInstagram ? 'post-card-instagram' : `post-card-${post.status}`;
             
@@ -894,7 +1060,8 @@ async function loadAllPosts() {
                     ${post.media && post.media.length > 0 ? `
                         <img src="${isInstagram ? post.media[0].url : `/api/posts/media/${post.media[0].id}`}" 
                              class="post-thumbnail" 
-                             alt="Post thumbnail">
+                             alt="Post thumbnail"
+                             onerror="this.src='${isInstagram ? post.media[0].original_url : ''}'">
                     ` : ''}
                     <div class="post-content">
                         <div class="post-caption">
@@ -1027,18 +1194,28 @@ async function loadInstagramPosts() {
     const loading = document.getElementById('instagramPostsLoading');
     const error = document.getElementById('instagramPostsError');
     const empty = document.getElementById('instagramPostsEmpty');
+    const refreshBtn = document.getElementById('refreshInstagramPosts');
     
     // Reset states
     container.innerHTML = '';
     loading.style.display = 'block';
     error.style.display = 'none';
     empty.style.display = 'none';
+    if (refreshBtn) refreshBtn.disabled = true;
     
     try {
-        const response = await apiCall('/instagram/posts?limit=25');
+        // Check if refresh was requested
+        const forceRefresh = refreshBtn && refreshBtn.dataset.forceRefresh === 'true';
+        if (forceRefresh) {
+            delete refreshBtn.dataset.forceRefresh;
+        }
+        
+        const url = `/api/instagram/posts?limit=25${forceRefresh ? '&refresh=true' : ''}`;
+        const response = await apiCall(url);
         const data = await response.json();
         
         loading.style.display = 'none';
+        if (refreshBtn) refreshBtn.disabled = false;
         
         if (!response.ok) {
             error.textContent = data.error || 'Failed to load Instagram posts';
@@ -1051,40 +1228,99 @@ async function loadInstagramPosts() {
             return;
         }
         
-        container.innerHTML = data.posts.map(post => `
-            <div class="post-card">
-                ${post.media_type === 'VIDEO' ? `
-                    <video class="post-thumbnail" controls>
-                        <source src="${post.media_url}" type="video/mp4">
-                    </video>
-                ` : `
-                    <img src="${post.media_url}" 
-                         class="post-thumbnail" 
-                         alt="Instagram post"
-                         onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22%3E%3Crect fill=%22%23ddd%22 width=%22100%22 height=%22100%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23999%22%3EImage%3C/text%3E%3C/svg%3E'">
-                `}
-                <div class="post-content">
-                    <div class="post-caption">
-                        ${post.caption ? post.caption.substring(0, 150) + (post.caption.length > 150 ? '...' : '') : 'No caption'}
-                    </div>
-                    <div class="post-meta">
-                        <span>📅 ${formatDateTime(post.timestamp)}</span>
-                        ${post.like_count !== undefined ? `<span>❤️ ${post.like_count}</span>` : ''}
-                        ${post.comments_count !== undefined ? `<span>💬 ${post.comments_count}</span>` : ''}
-                    </div>
-                    <div class="post-actions">
-                        <a href="${post.permalink}" target="_blank" class="btn btn-sm btn-primary">
-                            View on Instagram
-                        </a>
+        // Cache posts on client side with encryption
+        if (encryptionKey && typeof EncryptedCacheManager !== 'undefined') {
+            try {
+                await EncryptedCacheManager.cachePostsBatch(data.posts, encryptionKey);
+            } catch (e) {
+                console.warn('Failed to cache posts locally:', e);
+            }
+        }
+        
+        // Show cache info if data came from cache
+        let cacheNote = '';
+        if (data.from_cache) {
+            cacheNote = `<div class="cache-info" style="padding: 0.75rem; margin-bottom: 1rem; background: #E0F2FE; border-left: 4px solid #0284C7; border-radius: 4px;">
+                <span style="color: #0C4A6E; font-size: 0.875rem;">📦 Loaded from cache (updated ${new Date().toLocaleTimeString()})</span>
+            </div>`;
+        }
+        
+        container.innerHTML = cacheNote + data.posts.map(post => {
+            const imageUrl = post.cached_image_url || post.media_url;
+            return `
+                <div class="post-card">
+                    ${post.media_type === 'VIDEO' ? `
+                        <video class="post-thumbnail" controls>
+                            <source src="${post.media_url}" type="video/mp4">
+                        </video>
+                    ` : `
+                        <img src="${imageUrl}" 
+                             class="post-thumbnail" 
+                             alt="Instagram post"
+                             onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22%3E%3Crect fill=%22%23ddd%22 width=%22100%22 height=%22100%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23999%22%3EImage%3C/text%3E%3C/svg%3E'">
+                    `}
+                    <div class="post-content">
+                        <div class="post-caption">
+                            ${post.caption ? post.caption.substring(0, 150) + (post.caption.length > 150 ? '...' : '') : 'No caption'}
+                        </div>
+                        <div class="post-meta">
+                            <span>📅 ${formatDateTime(post.timestamp)}</span>
+                            ${post.like_count !== undefined ? `<span>❤️ ${post.like_count}</span>` : ''}
+                            ${post.comments_count !== undefined ? `<span>💬 ${post.comments_count}</span>` : ''}
+                        </div>
+                        <div class="post-actions">
+                            <a href="${post.permalink}" target="_blank" class="btn btn-sm btn-primary">
+                                View on Instagram
+                            </a>
+                        </div>
                     </div>
                 </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
     } catch (error) {
         console.error('Failed to load Instagram posts:', error);
         loading.style.display = 'none';
+        if (refreshBtn) refreshBtn.disabled = false;
         error.textContent = 'Failed to load Instagram posts. Please try again.';
         error.style.display = 'block';
+    }
+}
+
+// Refresh Instagram posts with force fetch
+async function refreshInstagramPosts() {
+    const refreshBtn = document.getElementById('refreshInstagramPosts');
+    if (!refreshBtn) return;
+    
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Refreshing...';
+    
+    try {
+        const response = await apiCall('/api/instagram/refresh-cache', { method: 'POST' });
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Update local cache
+            if (encryptionKey && data.posts && typeof EncryptedCacheManager !== 'undefined') {
+                try {
+                    await EncryptedCacheManager.cachePostsBatch(data.posts, encryptionKey);
+                } catch (e) {
+                    console.warn('Failed to update local cache:', e);
+                }
+            }
+            
+            showToast('Instagram posts refreshed successfully', 'success');
+            await loadInstagramPosts();
+        } else {
+            showToast(data.error || 'Failed to refresh posts', 'error');
+        }
+    } catch (error) {
+        console.error('Refresh failed:', error);
+        showToast('Failed to refresh posts', 'error');
+    } finally {
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = 'Refresh';
+        }
     }
 }
 

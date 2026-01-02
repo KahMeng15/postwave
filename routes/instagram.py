@@ -1,9 +1,11 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, User
+from models import db, User, InstagramCache
 from instagram_api import InstagramAPI
+from cache_manager import CacheManager
 from datetime import datetime
 import logging
+import os
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -166,7 +168,65 @@ def instagram_status():
 @jwt_required()
 def get_instagram_posts():
     """
-    Fetch published posts from Instagram.
+    Fetch published posts from Instagram with caching.
+    
+    Query params:
+    - limit: Number of posts to fetch (default: 25)
+    - use_cache: Whether to use cached data (default: true)
+    - refresh: Force refresh from Instagram (overrides use_cache)
+    """
+    current_user_id = int(get_jwt_identity())
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    if not user.instagram_account_id or not user.instagram_access_token:
+        return jsonify({'error': 'Instagram not connected'}), 400
+    
+    try:
+        limit = request.args.get('limit', 25, type=int)
+        refresh = request.args.get('refresh', 'false').lower() == 'true'
+        use_cache = not refresh and request.args.get('use_cache', 'true').lower() == 'true'
+        
+        if refresh:
+            logger.info(f'Force refresh requested for user {current_user_id}')
+            use_cache = False
+        
+        # Fetch with caching
+        posts, from_cache = ig_api.get_media_list_with_cache(
+            user.instagram_access_token,
+            user.instagram_account_id,
+            current_user_id,
+            limit=limit,
+            use_cache=use_cache
+        )
+        
+        # Enhance posts with cached image URLs
+        for post in posts:
+            cache = CacheManager.get_cached_post(post.get('id'))
+            if cache and cache.cached_image_path:
+                post['cached_image_url'] = f"/api/instagram/cache-image/{cache.id}"
+        
+        return jsonify({
+            'posts': posts,
+            'count': len(posts),
+            'from_cache': from_cache,
+            'cache_expiry_days': CacheManager.CACHE_EXPIRY_DAYS
+        }), 200
+    
+    except Exception as e:
+        error_msg = f'Failed to fetch Instagram posts: {str(e)}'
+        logger.error(error_msg, exc_info=True)
+        return jsonify({'error': error_msg}), 400
+
+
+@instagram_bp.route('/refresh-cache', methods=['POST'])
+@jwt_required()
+def refresh_cache():
+    """
+    Force refresh Instagram posts cache.
+    This endpoint fetches fresh data from Instagram and updates the cache.
     """
     current_user_id = int(get_jwt_identity())
     user = User.query.get(current_user_id)
@@ -180,19 +240,90 @@ def get_instagram_posts():
     try:
         limit = request.args.get('limit', 25, type=int)
         
-        logger.info(f'Fetching Instagram posts for user {current_user_id}')
-        posts = ig_api.get_media_list(
+        logger.info(f'Refreshing Instagram cache for user {current_user_id}')
+        
+        # Fetch fresh data (bypass cache)
+        posts, _ = ig_api.get_media_list_with_cache(
             user.instagram_access_token,
             user.instagram_account_id,
-            limit=limit
+            current_user_id,
+            limit=limit,
+            use_cache=False
         )
         
+        # Enhance posts with cached image URLs
+        for post in posts:
+            cache = CacheManager.get_cached_post(post.get('id'))
+            if cache and cache.cached_image_path:
+                post['cached_image_url'] = f"/api/instagram/cache-image/{cache.id}"
+        
         return jsonify({
+            'message': 'Cache refreshed successfully',
             'posts': posts,
-            'count': len(posts)
+            'count': len(posts),
+            'from_cache': False
         }), 200
     
     except Exception as e:
-        error_msg = f'Failed to fetch Instagram posts: {str(e)}'
+        error_msg = f'Failed to refresh cache: {str(e)}'
         logger.error(error_msg, exc_info=True)
         return jsonify({'error': error_msg}), 400
+
+
+@instagram_bp.route('/cache-image/<int:cache_id>', methods=['GET'])
+def get_cached_image(cache_id):
+    """
+    Serve cached Instagram image.
+    """
+    try:
+        cache = InstagramCache.query.get(cache_id)
+        
+        if not cache or not cache.cached_image_path or not os.path.exists(cache.cached_image_path):
+            return jsonify({'error': 'Image not found'}), 404
+        
+        return send_file(
+            cache.cached_image_path,
+            mimetype='image/jpeg',
+            as_attachment=False
+        )
+    
+    except Exception as e:
+        logger.error(f'Failed to serve cached image: {str(e)}', exc_info=True)
+        return jsonify({'error': 'Failed to serve image'}), 500
+
+
+@instagram_bp.route('/cache-stats', methods=['GET'])
+@jwt_required()
+def get_cache_stats():
+    """
+    Get cache statistics for the current user.
+    """
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        stats = CacheManager.get_cache_stats(current_user_id)
+        return jsonify(stats), 200
+    
+    except Exception as e:
+        logger.error(f'Failed to get cache stats: {str(e)}')
+        return jsonify({'error': 'Failed to get cache stats'}), 500
+
+
+@instagram_bp.route('/cache/clear', methods=['POST'])
+@jwt_required()
+def clear_user_cache():
+    """
+    Clear all cache for the current user.
+    """
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        deleted_count = CacheManager.invalidate_user_cache(current_user_id)
+        return jsonify({
+            'message': f'Cache cleared successfully',
+            'deleted_count': deleted_count
+        }), 200
+    
+    except Exception as e:
+        logger.error(f'Failed to clear cache: {str(e)}')
+        return jsonify({'error': 'Failed to clear cache'}), 500

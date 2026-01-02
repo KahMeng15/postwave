@@ -36,19 +36,19 @@
     <!-- Stats -->
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-value" id="statTotal">0</div>
+            <div class="stat-value" id="statTotal">--</div>
             <div class="stat-label">Total Posts</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value" id="statScheduled">0</div>
+            <div class="stat-value" id="statScheduled">--</div>
             <div class="stat-label">Scheduled</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value" id="statPublished">0</div>
+            <div class="stat-value" id="statPublished">--</div>
             <div class="stat-label">Published</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value" id="statFailed">0</div>
+            <div class="stat-value" id="statFailed">--</div>
             <div class="stat-label">Failed</div>
         </div>
     </div>
@@ -57,9 +57,12 @@
     <div class="card">
         <div class="card-header">
             <h2>Upcoming Posts</h2>
+            <button id="refreshDashboard" class="btn btn-sm btn-secondary" style="margin-left: auto;" title="Refresh dashboard data">
+                ↻ Refresh
+            </button>
         </div>
         <div class="card-body">
-            <div id="upcomingPostsContainer"></div>
+            <div id="upcomingPostsContainer"><p class="text-muted">Loading upcoming posts...</p></div>
         </div>
     </div>
 </div>
