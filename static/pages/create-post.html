@@ -20,6 +20,20 @@
                         </div>
                         
                         <div class="form-group">
+                            <label>Post Aspect Ratio</label>
+                            <div class="aspect-ratio-wrapper">
+                                <select id="aspectRatio" class="aspect-ratio-select">
+                                    <option value="original">Original (no crop)</option>
+                                    <option value="1:1">Square (1:1)</option>
+                                    <option value="4:5">Portrait (4:5)</option>
+                                    <option value="1.91:1">Landscape (1.91:1)</option>
+                                    <option value="custom">Custom</option>
+                                </select>
+                                <input type="text" id="customAspectRatio" placeholder="e.g. 16:9" class="custom-aspect-input" style="display: none;">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
                             <label>Caption</label>
                             <textarea id="postCaption" rows="6" placeholder="Write your caption here... #hashtags"></textarea>
                             <div class="character-count">
@@ -64,6 +78,26 @@
             </div>
         </div>
         
+        <!-- Crop Modal -->
+        <div id="cropModal" class="crop-modal" style="display: none;">
+            <div class="crop-modal-content">
+                <div class="crop-modal-header">
+                    <h3>Crop Image</h3>
+                    <button type="button" class="crop-modal-close" onclick="closeCropModal()">&times;</button>
+                </div>
+                <div class="crop-modal-body">
+                    <div class="crop-container">
+                        <img id="cropImage" src="" alt="Crop image">
+                        <canvas id="cropCanvas" class="crop-canvas" style="display: none;"></canvas>
+                    </div>
+                </div>
+                <div class="crop-modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeCropModal()">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="applyCrop()">Apply Crop</button>
+                </div>
+            </div>
+        </div>
+        
         <div class="editor-preview">
             <div class="card">
                 <div class="card-header">
@@ -75,7 +109,12 @@
                             <div class="ig-avatar"></div>
                             <div class="ig-username">@<span id="previewUsername">username</span></div>
                         </div>
-                        <div id="previewImages" class="ig-images"></div>
+                        <div class="ig-carousel-container">
+                            <button type="button" class="carousel-btn carousel-prev" id="carouselPrev" style="display: none;">❮</button>
+                            <div id="previewImages" class="ig-images"></div>
+                            <button type="button" class="carousel-btn carousel-next" id="carouselNext" style="display: none;">❯</button>
+                            <div id="carouselIndicators" class="carousel-indicators"></div>
+                        </div>
                         <div class="ig-caption" id="previewCaption">Your caption will appear here...</div>
                         <div class="ig-date" id="previewDate">Scheduled: --</div>
                     </div>

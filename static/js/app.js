@@ -8,6 +8,11 @@ let currentTheme = localStorage.getItem('theme') || 'light';
 let navbarListenersSetup = false; // Track if navbar listeners are already set up
 let calendarWeekOffset = 0; // Track which week is being displayed (0 = current week)
 let calendarInitialized = false; // Track if calendar has been initialized for this view
+let currentCarouselIndex = 0; // Track current image in carousel
+let selectedAspectRatio = 'original'; // Track selected aspect ratio
+let draggedItemIndex = null; // Track dragged item during reordering
+let currentCropIndex = null; // Track which image is being cropped
+let cropData = {}; // Store crop data for images
 
 // Global encryption key for client-side cache
 let encryptionKey = null;
@@ -270,6 +275,10 @@ function setupViewListeners() {
     const scheduledTime = document.getElementById('scheduledTime');
     const prevWeekBtn = document.getElementById('prevWeek');
     const nextWeekBtn = document.getElementById('nextWeek');
+    const aspectRatioSelect = document.getElementById('aspectRatio');
+    const customAspectInput = document.getElementById('customAspectRatio');
+    const carouselPrev = document.getElementById('carouselPrev');
+    const carouselNext = document.getElementById('carouselNext');
     
     if (mediaFiles) mediaFiles.addEventListener('change', handleMediaSelect);
     if (postCaption) postCaption.addEventListener('input', updatePreview);
@@ -285,6 +294,10 @@ function setupViewListeners() {
     if (scheduledTime) scheduledTime.addEventListener('change', handleManualDateTimeChange);
     if (prevWeekBtn) prevWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(-1); });
     if (nextWeekBtn) nextWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(1); });
+    if (aspectRatioSelect) aspectRatioSelect.addEventListener('change', handleAspectRatioChange);
+    if (customAspectInput) customAspectInput.addEventListener('change', () => { displayMediaPreview(); updatePreview(); });
+    if (carouselPrev) carouselPrev.addEventListener('click', (e) => { e.preventDefault(); navigateCarousel(-1); });
+    if (carouselNext) carouselNext.addEventListener('click', (e) => { e.preventDefault(); navigateCarousel(1); });
     
     // Dashboard / Instagram settings
     const connectInstagramBtn = document.getElementById('connectInstagram');
@@ -1382,27 +1395,116 @@ async function handleMediaSelect(e) {
     updatePreview();
 }
 
+// Convert aspect ratio format from "1:1" to "1/1" or decimal
+function normalizeAspectRatio(ratio) {
+    if (ratio === 'original' || ratio === 'auto') {
+        return 'auto';
+    }
+    
+    // If it contains ":", convert to "/"
+    if (ratio.includes(':')) {
+        const parts = ratio.split(':');
+        if (parts.length === 2) {
+            const width = parseFloat(parts[0]);
+            const height = parseFloat(parts[1]);
+            if (!isNaN(width) && !isNaN(height)) {
+                return width / height;
+            }
+        }
+    }
+    
+    // If it's already a decimal or ratio with "/", use as-is
+    return ratio;
+}
+
 function displayMediaPreview() {
     const container = document.getElementById('mediaPreview');
     container.innerHTML = '';
+    
+    // Get current aspect ratio
+    let aspectRatio = document.getElementById('aspectRatio').value;
+    if (aspectRatio === 'custom') {
+        const customRatio = document.getElementById('customAspectRatio').value;
+        aspectRatio = customRatio || 'original';
+    }
+    
+    // Normalize aspect ratio for CSS
+    const normalizedRatio = normalizeAspectRatio(aspectRatio);
     
     selectedFiles.forEach((file, index) => {
         const reader = new FileReader();
         reader.onload = (e) => {
             const div = document.createElement('div');
             div.className = 'media-preview-item';
+            div.draggable = true;
+            div.setAttribute('data-index', index);
+            
+            // Apply aspect ratio styling to container
+            div.style.aspectRatio = normalizedRatio;
+            
             div.innerHTML = `
-                <img src="${e.target.result}" alt="Preview ${index + 1}">
-                <button class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
+                <img src="${e.target.result}" alt="Preview ${index + 1}" onclick="openCropModal(${index})">
+                <button type="button" class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
             `;
+            
+            // Drag and drop event listeners
+            div.addEventListener('dragstart', handleDragStart);
+            div.addEventListener('dragover', handleDragOver);
+            div.addEventListener('drop', handleDrop);
+            div.addEventListener('dragleave', handleDragLeave);
+            div.addEventListener('dragend', handleDragEnd);
+            
             container.appendChild(div);
         };
         reader.readAsDataURL(file);
     });
 }
 
+function handleDragStart(e) {
+    draggedItemIndex = parseInt(e.target.closest('.media-preview-item').getAttribute('data-index'));
+    e.target.closest('.media-preview-item').classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    e.target.closest('.media-preview-item')?.classList.add('drag-over');
+}
+
+function handleDragLeave(e) {
+    e.target.closest('.media-preview-item')?.classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    const targetItem = e.target.closest('.media-preview-item');
+    const targetIndex = parseInt(targetItem.getAttribute('data-index'));
+    
+    if (draggedItemIndex !== targetIndex && draggedItemIndex !== null) {
+        // Swap items
+        const temp = selectedFiles[draggedItemIndex];
+        selectedFiles[draggedItemIndex] = selectedFiles[targetIndex];
+        selectedFiles[targetIndex] = temp;
+        
+        displayMediaPreview();
+        updatePreview();
+    }
+    
+    targetItem?.classList.remove('drag-over');
+}
+
+function handleDragEnd(e) {
+    e.target.closest('.media-preview-item')?.classList.remove('dragging');
+    draggedItemIndex = null;
+    document.querySelectorAll('.media-preview-item').forEach(item => {
+        item.classList.remove('drag-over', 'dragging');
+    });
+}
+
 function removeMedia(index) {
     selectedFiles.splice(index, 1);
+    currentCarouselIndex = 0;
     displayMediaPreview();
     updatePreview();
 }
@@ -1438,22 +1540,69 @@ function updatePreview() {
         previewDate.textContent = 'Scheduled: --';
     }
     
-    // Update images preview
+    // Update images preview with carousel
     const previewContainer = document.getElementById('previewImages');
     previewContainer.innerHTML = '';
     
+    // Apply aspect ratio styling
+    let aspectRatio = document.getElementById('aspectRatio').value;
+    if (aspectRatio === 'custom') {
+        const customRatio = document.getElementById('customAspectRatio').value;
+        aspectRatio = customRatio || 'original';
+    }
+    selectedAspectRatio = aspectRatio;
+    
+    // Normalize aspect ratio for CSS
+    const normalizedRatio = normalizeAspectRatio(aspectRatio);
+    previewContainer.style.aspectRatio = normalizedRatio;
+    
+    // Also apply aspect ratio to media preview items
+    document.querySelectorAll('.media-preview-item').forEach(item => {
+        item.style.aspectRatio = normalizedRatio;
+    });
+    
     if (selectedFiles.length > 0) {
-        selectedFiles.forEach((file) => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const img = document.createElement('img');
-                img.src = e.target.result;
-                previewContainer.appendChild(img);
-            };
-            reader.readAsDataURL(file);
-        });
+        // Only show current image in carousel
+        const currentFile = selectedFiles[currentCarouselIndex];
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = document.createElement('img');
+            img.src = e.target.result;
+            img.style.width = '100%';
+            img.style.height = '100%';
+            img.style.objectFit = 'cover';
+            previewContainer.appendChild(img);
+        };
+        reader.readAsDataURL(currentFile);
+        
+        // Show/hide carousel buttons based on image count
+        const carouselPrev = document.getElementById('carouselPrev');
+        const carouselNext = document.getElementById('carouselNext');
+        const indicatorsContainer = document.getElementById('carouselIndicators');
+        
+        if (selectedFiles.length > 1) {
+            if (carouselPrev) carouselPrev.style.display = 'flex';
+            if (carouselNext) carouselNext.style.display = 'flex';
+            
+            // Update indicators
+            indicatorsContainer.innerHTML = '';
+            selectedFiles.forEach((_, idx) => {
+                const indicator = document.createElement('div');
+                indicator.className = `carousel-indicator ${idx === currentCarouselIndex ? 'active' : ''}`;
+                indicator.addEventListener('click', () => {
+                    currentCarouselIndex = idx;
+                    updatePreview();
+                });
+                indicatorsContainer.appendChild(indicator);
+            });
+        } else {
+            if (carouselPrev) carouselPrev.style.display = 'none';
+            if (carouselNext) carouselNext.style.display = 'none';
+            indicatorsContainer.innerHTML = '';
+        }
     }
 }
+
 
 // Initialize week calendar with 7 days
 function initializeWeekCalendar() {
@@ -1642,6 +1791,21 @@ async function getScheduledPostsForWeek() {
     return [];
 }
 
+function navigateCarousel(direction) {
+    if (selectedFiles.length <= 1) return;
+    
+    currentCarouselIndex += direction;
+    
+    // Wrap around
+    if (currentCarouselIndex < 0) {
+        currentCarouselIndex = selectedFiles.length - 1;
+    } else if (currentCarouselIndex >= selectedFiles.length) {
+        currentCarouselIndex = 0;
+    }
+    
+    updatePreview();
+}
+
 async function handleCreatePost(e, status = 'scheduled') {
     if (e) e.preventDefault();
     
@@ -1706,9 +1870,14 @@ function resetPostForm() {
     const captionCount = document.getElementById('captionCount');
     const timePeriod = document.getElementById('timePeriod');
     const scheduledTime = document.getElementById('scheduledTime');
+    const aspectRatioSelect = document.getElementById('aspectRatio');
+    const customAspectInput = document.getElementById('customAspectRatio');
     
     if (form) form.reset();
     selectedFiles = [];
+    currentCarouselIndex = 0;
+    selectedAspectRatio = 'original';
+    cropData = {};
     if (mediaPreview) mediaPreview.innerHTML = '';
     if (previewImages) previewImages.innerHTML = '';
     if (previewCaption) previewCaption.textContent = 'Your caption will appear here...';
@@ -1716,6 +1885,23 @@ function resetPostForm() {
     if (captionCount) captionCount.textContent = '0';
     if (timePeriod) timePeriod.value = '';
     if (scheduledTime) scheduledTime.value = '';
+    if (aspectRatioSelect) aspectRatioSelect.value = 'original';
+    if (customAspectInput) {
+        customAspectInput.value = '';
+        customAspectInput.style.display = 'none';
+    }
+    
+    // Reset carousel buttons
+    const carouselPrev = document.getElementById('carouselPrev');
+    const carouselNext = document.getElementById('carouselNext');
+    const indicatorsContainer = document.getElementById('carouselIndicators');
+    if (carouselPrev) carouselPrev.style.display = 'none';
+    if (carouselNext) carouselNext.style.display = 'none';
+    if (indicatorsContainer) indicatorsContainer.innerHTML = '';
+    
+    // Close crop modal if open
+    const cropModal = document.getElementById('cropModal');
+    if (cropModal) cropModal.style.display = 'none';
     
     // Reset calendar selection only (don't reinitialize)
     const selectedDays = document.querySelectorAll('.week-calendar-day.selected');
@@ -1942,4 +2128,177 @@ function showToast(message, type = 'info') {
 
 function closeModal() {
     document.getElementById('postModal').classList.remove('show');
+}
+
+// Crop Modal Functions
+let cropState = {
+    startX: 0,
+    startY: 0,
+    isDrawing: false,
+    cropBox: null
+};
+
+function openCropModal(index) {
+    currentCropIndex = index;
+    const modal = document.getElementById('cropModal');
+    const cropImage = document.getElementById('cropImage');
+    const cropCanvas = document.getElementById('cropCanvas');
+    
+    // Load the image
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        cropImage.src = e.target.result;
+        cropImage.onload = () => {
+            // Draw image on canvas
+            const ctx = cropCanvas.getContext('2d');
+            cropCanvas.width = cropImage.width;
+            cropCanvas.height = cropImage.height;
+            ctx.drawImage(cropImage, 0, 0);
+            
+            // Initialize crop box at center
+            const boxSize = Math.min(cropCanvas.width, cropCanvas.height) * 0.8;
+            cropState.cropBox = {
+                x: (cropCanvas.width - boxSize) / 2,
+                y: (cropCanvas.height - boxSize) / 2,
+                width: boxSize,
+                height: boxSize
+            };
+            
+            drawCropBox();
+        };
+    };
+    
+    reader.readAsDataURL(selectedFiles[index]);
+    modal.style.display = 'flex';
+    
+    // Add canvas event listeners for drawing crop box
+    cropCanvas.addEventListener('mousedown', handleCropStart);
+    cropCanvas.addEventListener('mousemove', handleCropMove);
+    cropCanvas.addEventListener('mouseup', handleCropEnd);
+    cropCanvas.addEventListener('mouseleave', handleCropEnd);
+}
+
+function closeCropModal() {
+    const modal = document.getElementById('cropModal');
+    modal.style.display = 'none';
+    currentCropIndex = null;
+    cropState.isDrawing = false;
+    
+    // Remove event listeners
+    const cropCanvas = document.getElementById('cropCanvas');
+    cropCanvas.removeEventListener('mousedown', handleCropStart);
+    cropCanvas.removeEventListener('mousemove', handleCropMove);
+    cropCanvas.removeEventListener('mouseup', handleCropEnd);
+    cropCanvas.removeEventListener('mouseleave', handleCropEnd);
+}
+
+function drawCropBox() {
+    const cropCanvas = document.getElementById('cropCanvas');
+    const cropImage = document.getElementById('cropImage');
+    const ctx = cropCanvas.getContext('2d');
+    
+    // Redraw image
+    ctx.drawImage(cropImage, 0, 0);
+    
+    // Draw semi-transparent overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+    
+    // Clear crop area
+    if (cropState.cropBox) {
+        ctx.clearRect(cropState.cropBox.x, cropState.cropBox.y, cropState.cropBox.width, cropState.cropBox.height);
+        ctx.drawImage(cropImage, cropState.cropBox.x, cropState.cropBox.y, cropState.cropBox.width, cropState.cropBox.height, 
+                      cropState.cropBox.x, cropState.cropBox.y, cropState.cropBox.width, cropState.cropBox.height);
+        
+        // Draw crop box border
+        ctx.strokeStyle = '#ff6b6b';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(cropState.cropBox.x, cropState.cropBox.y, cropState.cropBox.width, cropState.cropBox.height);
+    }
+}
+
+function handleCropStart(e) {
+    const cropCanvas = document.getElementById('cropCanvas');
+    const rect = cropCanvas.getBoundingClientRect();
+    cropState.startX = e.clientX - rect.left;
+    cropState.startY = e.clientY - rect.top;
+    cropState.isDrawing = true;
+}
+
+function handleCropMove(e) {
+    if (!cropState.isDrawing || !cropState.cropBox) return;
+    
+    const cropCanvas = document.getElementById('cropCanvas');
+    const rect = cropCanvas.getBoundingClientRect();
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+    
+    // Calculate new crop box
+    const minSize = 50;
+    const width = Math.max(minSize, currentX - cropState.startX);
+    const height = Math.max(minSize, currentY - cropState.startY);
+    
+    cropState.cropBox.x = Math.max(0, cropState.startX);
+    cropState.cropBox.y = Math.max(0, cropState.startY);
+    cropState.cropBox.width = Math.min(width, cropCanvas.width - cropState.cropBox.x);
+    cropState.cropBox.height = Math.min(height, cropCanvas.height - cropState.cropBox.y);
+    
+    drawCropBox();
+}
+
+function handleCropEnd() {
+    cropState.isDrawing = false;
+}
+
+function applyCrop() {
+    if (currentCropIndex === null || !cropState.cropBox) return;
+    
+    const cropCanvas = document.getElementById('cropCanvas');
+    const cropImage = document.getElementById('cropImage');
+    
+    // Create temporary canvas for cropping
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = cropState.cropBox.width;
+    tempCanvas.height = cropState.cropBox.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    // Get the cropped image data
+    const imageData = cropCanvas.getContext('2d').getImageData(
+        cropState.cropBox.x, 
+        cropState.cropBox.y, 
+        cropState.cropBox.width, 
+        cropState.cropBox.height
+    );
+    tempCtx.putImageData(imageData, 0, 0);
+    
+    // Convert to blob and update selectedFiles
+    tempCanvas.toBlob((blob) => {
+        const file = new File([blob], selectedFiles[currentCropIndex].name, { type: 'image/jpeg' });
+        selectedFiles[currentCropIndex] = file;
+        
+        // Update preview
+        displayMediaPreview();
+        updatePreview();
+        
+        // Close modal
+        closeCropModal();
+        showToast('Image cropped successfully', 'success');
+    }, 'image/jpeg');
+}
+
+// Aspect Ratio Handler
+function handleAspectRatioChange(e) {
+    const value = e.target.value;
+    const customInput = document.getElementById('customAspectRatio');
+    
+    if (value === 'custom') {
+        customInput.style.display = 'block';
+    } else {
+        customInput.style.display = 'none';
+        customInput.value = '';
+    }
+    
+    selectedAspectRatio = value;
+    displayMediaPreview();
+    updatePreview();
 }
