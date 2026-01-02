@@ -1,0 +1,65 @@
+<!-- Dashboard View -->
+<div id="dashboardView" class="container">
+    <!-- Instagram Connection Status -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Instagram Connection</h2>
+        </div>
+        <div class="card-body">
+            <div id="igNotConnected" style="display: none;">
+                <p>Connect your Instagram Business account to start scheduling posts.</p>
+                <button id="connectInstagram" class="btn btn-primary">Connect Instagram</button>
+                <div class="info-box" style="margin-top: 1rem;">
+                    <strong>Setup Instructions:</strong>
+                    <ol>
+                        <li>Create a Facebook Page (if you don't have one)</li>
+                        <li>Convert your Instagram account to Business</li>
+                        <li>Connect your Instagram to the Facebook Page</li>
+                        <li>Create a Facebook App with Instagram permissions</li>
+                        <li>Get your access token and page ID</li>
+                    </ol>
+                </div>
+            </div>
+            <div id="igConnected" style="display: none;">
+                <div class="ig-status">
+                    <div class="ig-status-icon">✓</div>
+                    <div>
+                        <strong>Connected as @<span id="igUsername"></span></strong>
+                        <p class="text-muted">Token expires: <span id="igExpiry"></span></p>
+                    </div>
+                </div>
+                <button id="disconnectInstagram" class="btn btn-secondary">Disconnect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" id="statTotal">0</div>
+            <div class="stat-label">Total Posts</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statScheduled">0</div>
+            <div class="stat-label">Scheduled</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statPublished">0</div>
+            <div class="stat-label">Published</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statFailed">0</div>
+            <div class="stat-label">Failed</div>
+        </div>
+    </div>
+
+    <!-- Upcoming Posts -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Upcoming Posts</h2>
+        </div>
+        <div class="card-body">
+            <div id="upcomingPostsContainer"></div>
+        </div>
+    </div>
+</div>

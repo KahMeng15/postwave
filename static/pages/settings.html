@@ -1,0 +1,90 @@
+<!-- Settings View -->
+<div id="settingsView" class="container">
+    <div class="view-header">
+        <h1>Settings</h1>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h2>Instagram API Configuration</h2>
+        </div>
+        <div class="card-body">
+            <form id="instagramConfigForm">
+                <div class="info-box" style="margin-bottom: 1rem;">
+                    <strong>📖 How to find your Instagram Business Account ID:</strong>
+                    <ol style="margin: 0.5rem 0 0 0; padding-left: 1.5rem;">
+                        <li>Generate an access token from <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a></li>
+                        <li>When authorizing, look at the Instagram selection screen</li>
+                        <li>The number below your Instagram username is your Account ID</li>
+                        <li>Or use Graph API to query: <code>me/accounts?fields=instagram_business_account</code></li>
+                    </ol>
+                </div>
+                <div class="form-group">
+                    <label>Access Token *</label>
+                    <input type="text" id="accessToken" placeholder="EAAMDbXJTTtMBO..." required>
+                    <small class="text-muted">From: <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a> (select your app, generate token)</small>
+                </div>
+                <div class="form-group">
+                    <label>Instagram Business Account ID *</label>
+                    <input type="text" id="instagramAccountId" placeholder="17841478208100000">
+                    <small class="text-muted">The numeric ID shown below your Instagram username during authorization</small>
+                </div>
+                <div class="form-group">
+                    <label>Facebook Page ID (Alternative)</label>
+                    <input type="text" id="pageId" placeholder="103179312668000">
+                    <small class="text-muted">Only needed if you don't have the Instagram Account ID above</small>
+                </div>
+                <button type="submit" class="btn btn-primary">Save & Connect</button>
+            </form>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h2>Account Settings</h2>
+        </div>
+        <div class="card-body">
+            <form id="changePasswordForm">
+                <div class="form-group">
+                    <label>Current Password</label>
+                    <input type="password" id="oldPassword" required>
+                </div>
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" id="newPassword" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Change Password</button>
+            </form>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h2>⌨️ Keyboard Shortcuts</h2>
+        </div>
+        <div class="card-body">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                    <td style="padding: 0.75rem; font-weight: 500;">Ctrl/Cmd + N</td>
+                    <td style="padding: 0.75rem;">New Post</td>
+                </tr>
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                    <td style="padding: 0.75rem; font-weight: 500;">Ctrl/Cmd + D</td>
+                    <td style="padding: 0.75rem;">Dashboard</td>
+                </tr>
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                    <td style="padding: 0.75rem; font-weight: 500;">Ctrl/Cmd + P</td>
+                    <td style="padding: 0.75rem;">Posts</td>
+                </tr>
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                    <td style="padding: 0.75rem; font-weight: 500;">Ctrl/Cmd + S</td>
+                    <td style="padding: 0.75rem;">Settings</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.75rem; font-weight: 500;">ESC</td>
+                    <td style="padding: 0.75rem;">Close Modal</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</div>

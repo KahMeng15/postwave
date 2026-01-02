@@ -1,0 +1,195 @@
+import os
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from flask_jwt_extended import JWTManager
+from apscheduler.schedulers.background import BackgroundScheduler
+from config import Config
+from models import db
+from datetime import datetime
+import atexit
+import logging
+from logging.handlers import TimedRotatingFileHandler
+
+# Global variable to store app instance for scheduler
+scheduler_app = None
+
+def create_app(config_class=Config):
+    global scheduler_app
+    
+    app = Flask(__name__, static_folder='static', static_url_path='')
+    app.config.from_object(config_class)
+    
+    # Setup logging
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    # Rotate logs daily, keep 90 days of logs
+    file_handler = TimedRotatingFileHandler('logs/igscheduler.log', when='midnight', interval=1, backupCount=90)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    ))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+    
+    # Initialize extensions
+    db.init_app(app)
+    CORS(app)
+    jwt = JWTManager(app)
+    
+    # Create upload folder if it doesn't exist
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    
+    # Register blueprints
+    from routes.auth import auth_bp
+    from routes.posts import posts_bp
+    from routes.instagram import instagram_bp
+    from routes.users import users_bp
+    
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(posts_bp, url_prefix='/api/posts')
+    app.register_blueprint(instagram_bp, url_prefix='/api/instagram')
+    app.register_blueprint(users_bp, url_prefix='/api/users')
+    
+    # Store app instance for scheduler to use
+    scheduler_app = app
+    
+    # Initialize scheduler
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        func=check_scheduled_posts,
+        trigger="interval",
+        minutes=1,
+        id='check_posts',
+        name='Check and publish scheduled posts',
+        replace_existing=True
+    )
+    scheduler.start()
+    
+    # Shut down the scheduler when exiting the app
+    atexit.register(lambda: scheduler.shutdown())
+    
+    # Create database tables
+    with app.app_context():
+        db.create_all()
+    
+    # Error handlers
+    @app.errorhandler(404)
+    def not_found(error):
+        # For SPA routing: serve base.html for non-API routes
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Not found'}), 404
+        return app.send_static_file('base.html')
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        return jsonify({'error': 'Internal server error'}), 500
+    
+    # Health check
+    @app.route('/api/health')
+    def health():
+        return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
+    
+    # Serve base.html for root
+    @app.route('/')
+    def index():
+        return app.send_static_file('base.html')
+    
+    # Serve individual page HTML files
+    @app.route('/pages/<path:filename>')
+    def serve_pages(filename):
+        return app.send_static_file(f'pages/{filename}')
+    
+    # Catch-all for SPA routes (login, register, dashboard, posts, etc.)
+    # This must be the last route defined
+    @app.route('/<path:path>')
+    def catch_all(path):
+        # If it's not a static file or API, serve the base.html for client-side routing
+        if not path.startswith('api/') and '.' not in path:
+            return app.send_static_file('base.html')
+        return jsonify({'error': 'Not found'}), 404
+    
+    return app
+
+
+def check_scheduled_posts():
+    """
+    Background task to check and publish scheduled posts.
+    """
+    from models import Post, User, db
+    from instagram_api import InstagramAPI
+    
+    with scheduler_app.app_context():
+        # Find posts that are scheduled and due
+        # Use naive datetime comparison (both stored as local time)
+        now = datetime.now()
+        posts = Post.query.filter(
+            Post.status == 'scheduled',
+            Post.scheduled_time <= now
+        ).all()
+        
+        ig_api = InstagramAPI()
+        
+        for post in posts:
+            try:
+                # Update status immediately to prevent duplicate publishing attempts
+                post.status = 'publishing'
+                db.session.commit()
+                
+                user = User.query.get(post.user_id)
+                
+                if not user.instagram_access_token or not user.instagram_account_id:
+                    post.status = 'failed'
+                    post.error_message = 'Instagram not connected'
+                    db.session.commit()
+                    continue
+                
+                # Skip posts without media
+                if not post.media:
+                    post.status = 'failed'
+                    post.error_message = 'No media files attached'
+                    db.session.commit()
+                    continue
+                
+                # Get the public host URL
+                app_host = os.getenv('APP_HOST', 'http://127.0.0.1:5500')
+                
+                # Prepare publicly accessible media URLs
+                media_urls = [
+                    f"{app_host}/api/posts/media/{media.id}"
+                    for media in post.media
+                ]
+                
+                scheduler_app.logger.info(f'Publishing post {post.id} with {len(media_urls)} media items')
+                
+                # Publish to Instagram using URLs
+                instagram_post_id = ig_api.publish_post(
+                    user.instagram_access_token,
+                    user.instagram_account_id,
+                    media_urls,
+                    post.caption
+                )
+                
+                post.status = 'published'
+                post.instagram_post_id = instagram_post_id
+                post.published_at = datetime.now()
+                post.error_message = None
+                scheduler_app.logger.info(f'Successfully published post {post.id} to Instagram')
+                
+            except Exception as e:
+                scheduler_app.logger.error(f'Failed to publish post {post.id}: {str(e)}')
+                post.status = 'failed'
+                post.error_message = str(e)
+                db.session.commit()
+            
+            else:
+                # Only commit if no exception occurred
+                db.session.commit()
+
+
+if __name__ == '__main__':
+    app = create_app()
+    app.run(
+        host=Config.HOST,
+        port=Config.PORT,
+        debug=Config.FLASK_ENV == 'development'
+    )

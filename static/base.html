@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PostWave - Instagram Post Scheduler</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Navigation Bar (loaded after auth) -->
+    <nav id="navbar" class="navbar" style="display: none;">
+        <div class="nav-brand">PostWave</div>
+        <div class="nav-items">
+            <button id="navDashboard" class="nav-btn active">Dashboard</button>
+            <button id="navPosts" class="nav-btn">Posts</button>
+            <button id="navNewPost" class="nav-btn">New Post</button>
+            <div class="user-menu">
+                <button id="userMenuToggle" class="user-menu-toggle">
+                    <span id="navUsername" class="nav-username"></span>
+                    <span class="dropdown-arrow">▼</span>
+                </button>
+                <div id="userDropdown" class="user-dropdown" style="display: none;">
+                    <button id="navSettings" class="dropdown-item">⚙️ Settings</button>
+                    <button id="themeToggle" class="dropdown-item">🌙 Dark Mode</button>
+                    <button id="logoutBtn" class="dropdown-item logout-item">🚪 Logout</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <div id="mainContent"></div>
+
+    <!-- Modal for Post Details -->
+    <div id="postModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Post Details</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

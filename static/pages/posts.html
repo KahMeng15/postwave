@@ -1,0 +1,21 @@
+<!-- All Posts View -->
+<div id="postsView" class="container">
+    <div class="view-header">
+        <h1>Posts</h1>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <select id="statusFilter" class="form-select">
+                <option value="">All Posts</option>
+                <option value="draft">Draft</option>
+                <option value="scheduled">⏰ Scheduled</option>
+                <option value="published">✓ Published</option>
+                <option value="failed">Failed</option>
+                <option value="instagram">Instagram Only</option>
+            </select>
+            <button id="refreshAllPosts" class="btn btn-secondary">Refresh</button>
+        </div>
+    </div>
+    <div id="postsContainer" class="posts-grid"></div>
+    <div id="postsLoading" style="text-align: center; padding: 2rem; display: none;">
+        <p>Loading posts...</p>
+    </div>
+</div>
