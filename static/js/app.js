@@ -6,6 +6,8 @@ let currentUser = null;
 let selectedFiles = [];
 let currentTheme = localStorage.getItem('theme') || 'light';
 let navbarListenersSetup = false; // Track if navbar listeners are already set up
+let calendarWeekOffset = 0; // Track which week is being displayed (0 = current week)
+let calendarInitialized = false; // Track if calendar has been initialized for this view
 
 // Global encryption key for client-side cache
 let encryptionKey = null;
@@ -264,11 +266,25 @@ function setupViewListeners() {
     // Media selection
     const mediaFiles = document.getElementById('mediaFiles');
     const postCaption = document.getElementById('postCaption');
+    const timePeriod = document.getElementById('timePeriod');
     const scheduledTime = document.getElementById('scheduledTime');
+    const prevWeekBtn = document.getElementById('prevWeek');
+    const nextWeekBtn = document.getElementById('nextWeek');
     
     if (mediaFiles) mediaFiles.addEventListener('change', handleMediaSelect);
     if (postCaption) postCaption.addEventListener('input', updatePreview);
-    if (scheduledTime) scheduledTime.addEventListener('change', updatePreview);
+    if (timePeriod) {
+        timePeriod.addEventListener('change', handleTimePeriodChange);
+        // Only initialize calendar once per view
+        if (!calendarInitialized) {
+            calendarInitialized = true;
+            calendarWeekOffset = 0; // Reset to current week
+            initializeWeekCalendar();
+        }
+    }
+    if (scheduledTime) scheduledTime.addEventListener('change', handleManualDateTimeChange);
+    if (prevWeekBtn) prevWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(-1); });
+    if (nextWeekBtn) nextWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(1); });
     
     // Dashboard / Instagram settings
     const connectInstagramBtn = document.getElementById('connectInstagram');
@@ -578,11 +594,16 @@ async function showView(view, updateUrl = true) {
     // Update nav buttons
     document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
     
+    // Reset calendar initialization flag when switching views
+    if (view !== 'newPost') {
+        calendarInitialized = false;
+    }
+    
     // Map view names to their HTML files and nav buttons
     const viewConfig = {
         'dashboard': { file: 'dashboard', nav: 'navDashboard', init: loadDashboard, url: '/dashboard' },
         'posts': { file: 'posts', nav: 'navPosts', init: loadAllPosts, url: '/posts' },
-        'newPost': { file: 'create-post', nav: 'navNewPost', init: resetPostForm, url: '/newPost' },
+        'newPost': { file: 'create-post', nav: 'navNewPost', init: initializeNewPostView, url: '/newPost' },
         'settings': { file: 'settings', nav: 'navSettings', init: null, url: '/settings' }
     };
     
@@ -1329,8 +1350,8 @@ async function refreshInstagramPosts() {
 async function handleMediaSelect(e) {
     const files = Array.from(e.target.files);
     
-    if (files.length > 10) {
-        showToast('Maximum 10 images allowed', 'error');
+    if (files.length > 20) {
+        showToast('Maximum 20 images allowed', 'error');
         e.target.value = '';
         return;
     }
@@ -1388,7 +1409,9 @@ function removeMedia(index) {
 
 function updatePreview() {
     const caption = document.getElementById('postCaption').value;
-    const scheduledTime = document.getElementById('scheduledTime').value;
+    const selectedDate = document.querySelector('.week-calendar-day.selected');
+    const timePeriod = document.getElementById('timePeriod').value;
+    const scheduledTimeInput = document.getElementById('scheduledTime').value;
     
     // Update caption preview
     document.getElementById('previewCaption').textContent = caption || 'Your caption will appear here...';
@@ -1396,11 +1419,23 @@ function updatePreview() {
     // Update character count
     document.getElementById('captionCount').textContent = caption.length;
     
-    // Update date preview
-    if (scheduledTime) {
-        const date = new Date(scheduledTime);
-        document.getElementById('previewDate').textContent = 
-            `Scheduled: ${formatDateTime(date.toISOString())}`;
+    // Update date and time preview
+    const previewDate = document.getElementById('previewDate');
+    let scheduledDateTime = null;
+    
+    // Check if manual datetime is set, otherwise use calendar + time period
+    if (scheduledTimeInput) {
+        scheduledDateTime = new Date(scheduledTimeInput);
+    } else if (selectedDate && timePeriod) {
+        const dateStr = selectedDate.getAttribute('data-date');
+        scheduledDateTime = getScheduledDateTime(dateStr, timePeriod);
+    }
+    
+    if (scheduledDateTime) {
+        const formattedDate = formatDateTime(scheduledDateTime.toISOString());
+        previewDate.textContent = `Scheduled: ${formattedDate}`;
+    } else {
+        previewDate.textContent = 'Scheduled: --';
     }
     
     // Update images preview
@@ -1420,25 +1455,222 @@ function updatePreview() {
     }
 }
 
+// Initialize week calendar with 7 days
+function initializeWeekCalendar() {
+    const calendar = document.getElementById('weekCalendar');
+    if (!calendar) return;
+    
+    calendar.innerHTML = '';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Calculate the start of the week to display based on offset
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() + (calendarWeekOffset * 7));
+    
+    // Update month display
+    const monthDisplay = document.getElementById('weekMonthDisplay');
+    if (monthDisplay) {
+        const monthName = startDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        monthDisplay.textContent = monthName;
+    }
+    
+    // Get scheduled posts for this week to show indicators
+    getScheduledPostsForWeek().then(scheduledPosts => {
+        for (let i = 0; i < 7; i++) {
+            const date = new Date(startDate);
+            date.setDate(date.getDate() + i);
+            
+            const dateStr = date.toISOString().split('T')[0];
+            const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+            const dayNum = date.getDate();
+            const monthName = date.toLocaleDateString('en-US', { month: 'short' });
+            
+            // Check if date has passed
+            const isPast = date < today;
+            
+            // Check if there are posts scheduled for this day
+            const postsForDay = scheduledPosts.filter(post => {
+                const postDate = new Date(post.scheduled_time).toISOString().split('T')[0];
+                return postDate === dateStr;
+            });
+            
+            const dayDiv = document.createElement('div');
+            dayDiv.className = 'week-calendar-day';
+            if (isPast) {
+                dayDiv.classList.add('disabled');
+            }
+            dayDiv.setAttribute('data-date', dateStr);
+            dayDiv.innerHTML = `
+                <div class="day-name">${dayName}</div>
+                <div class="day-number">${dayNum}</div>
+                <div class="month-name">${monthName}</div>
+                ${postsForDay.length > 0 ? `<div class="scheduled-count">${postsForDay.length}</div>` : ''}
+            `;
+            
+            if (!isPast) {
+                dayDiv.addEventListener('click', () => selectCalendarDay(dayDiv));
+            }
+            calendar.appendChild(dayDiv);
+        }
+    });
+}
+
+function navigateWeek(direction) {
+    calendarWeekOffset += direction;
+    initializeWeekCalendar();
+}
+
+function selectCalendarDay(dayElement) {
+    // Remove selection from all days
+    const allDays = document.querySelectorAll('.week-calendar-day');
+    allDays.forEach(day => day.classList.remove('selected'));
+    
+    // Add selection to clicked day
+    dayElement.classList.add('selected');
+    
+    // Update datetime input with the selected date if time period is selected
+    const timePeriod = document.getElementById('timePeriod').value;
+    if (timePeriod) {
+        const dateStr = dayElement.getAttribute('data-date');
+        const scheduledDateTime = getScheduledDateTime(dateStr, timePeriod);
+        updateDateTimeInput(scheduledDateTime);
+    }
+    
+    updatePreview();
+}
+
+function handleTimePeriodChange(e) {
+    const timePeriod = e.target.value;
+    const selectedDate = document.querySelector('.week-calendar-day.selected');
+    
+    // If a date is selected and a time period is chosen, update the datetime input
+    if (selectedDate && timePeriod) {
+        const dateStr = selectedDate.getAttribute('data-date');
+        const scheduledDateTime = getScheduledDateTime(dateStr, timePeriod);
+        updateDateTimeInput(scheduledDateTime);
+    }
+    
+    updatePreview();
+}
+
+function updateDateTimeInput(dateTime) {
+    const scheduledTime = document.getElementById('scheduledTime');
+    if (scheduledTime) {
+        const year = dateTime.getFullYear();
+        const month = String(dateTime.getMonth() + 1).padStart(2, '0');
+        const day = String(dateTime.getDate()).padStart(2, '0');
+        const hours = String(dateTime.getHours()).padStart(2, '0');
+        const minutes = String(dateTime.getMinutes()).padStart(2, '0');
+        scheduledTime.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+    }
+}
+
+function handleManualDateTimeChange(e) {
+    const scheduledTime = e.target.value;
+    if (!scheduledTime) return;
+    
+    const dateTime = new Date(scheduledTime);
+    const dateStr = dateTime.toISOString().split('T')[0];
+    
+    // Update calendar selection
+    const allDays = document.querySelectorAll('.week-calendar-day');
+    allDays.forEach(day => day.classList.remove('selected'));
+    
+    const targetDay = document.querySelector(`.week-calendar-day[data-date="${dateStr}"]`);
+    if (targetDay) {
+        targetDay.classList.add('selected');
+    }
+    
+    // Determine time period from the hour (match closest time)
+    const hour = dateTime.getHours();
+    let timePeriod = '';
+    
+    // Find closest time period
+    const times = { morning: 9, afternoon: 12, evening: 17, night: 20 };
+    let closestPeriod = '';
+    let closestDiff = Infinity;
+    
+    for (const [period, periodHour] of Object.entries(times)) {
+        const diff = Math.abs(hour - periodHour);
+        if (diff < closestDiff) {
+            closestDiff = diff;
+            closestPeriod = period;
+        }
+    }
+    
+    if (closestPeriod) {
+        document.getElementById('timePeriod').value = closestPeriod;
+    }
+    
+    updatePreview();
+}
+
+function getScheduledDateTime(dateStr, timePeriod) {
+    const [year, month, day] = dateStr.split('-');
+    const date = new Date(year, parseInt(month) - 1, parseInt(day));
+    
+    const timeMap = {
+        'morning': 9,        // 9:00 AM
+        'afternoon': 12,     // 12:00 PM
+        'evening': 17,       // 5:00 PM
+        'night': 20          // 8:00 PM
+    };
+    
+    const hour = timeMap[timePeriod];
+    if (hour === undefined) return date;
+    
+    date.setHours(hour, 0, 0, 0);
+    return date;
+}
+
+async function getScheduledPostsForWeek() {
+    try {
+        const response = await apiCall('/posts/', {
+            method: 'GET',
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            // Filter for scheduled posts only
+            const posts = Array.isArray(data) ? data : (data.posts || []);
+            return posts.filter(post => post.status === 'scheduled');
+        }
+    } catch (error) {
+        console.error('Failed to fetch scheduled posts:', error);
+    }
+    return [];
+}
+
 async function handleCreatePost(e, status = 'scheduled') {
     if (e) e.preventDefault();
     
     const caption = document.getElementById('postCaption').value;
-    const scheduledTime = document.getElementById('scheduledTime').value;
-    
-    if (!scheduledTime) {
-        showToast('Please select a date and time', 'error');
-        return;
-    }
+    const selectedDate = document.querySelector('.week-calendar-day.selected');
+    const timePeriod = document.getElementById('timePeriod').value;
+    const scheduledTimeInput = document.getElementById('scheduledTime').value;
     
     if (selectedFiles.length === 0) {
         showToast('Please select at least one image', 'error');
         return;
     }
     
+    let scheduledDateTime = null;
+    
+    // Use manual datetime input if provided, otherwise use calendar + time period
+    if (scheduledTimeInput) {
+        scheduledDateTime = new Date(scheduledTimeInput);
+    } else if (selectedDate && timePeriod) {
+        const dateStr = selectedDate.getAttribute('data-date');
+        scheduledDateTime = getScheduledDateTime(dateStr, timePeriod);
+    } else {
+        showToast('Please select a date and time', 'error');
+        return;
+    }
+    
     const formData = new FormData();
     formData.append('caption', caption);
-    formData.append('scheduled_time', scheduledTime);
+    formData.append('scheduled_time', scheduledDateTime.toISOString());
     formData.append('status', status);
     
     selectedFiles.forEach((file) => {
@@ -1472,6 +1704,7 @@ function resetPostForm() {
     const previewCaption = document.getElementById('previewCaption');
     const previewDate = document.getElementById('previewDate');
     const captionCount = document.getElementById('captionCount');
+    const timePeriod = document.getElementById('timePeriod');
     const scheduledTime = document.getElementById('scheduledTime');
     
     if (form) form.reset();
@@ -1481,17 +1714,17 @@ function resetPostForm() {
     if (previewCaption) previewCaption.textContent = 'Your caption will appear here...';
     if (previewDate) previewDate.textContent = 'Scheduled: --';
     if (captionCount) captionCount.textContent = '0';
+    if (timePeriod) timePeriod.value = '';
+    if (scheduledTime) scheduledTime.value = '';
     
-    // Set minimum datetime to now (local time)
-    if (scheduledTime) {
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const day = String(now.getDate()).padStart(2, '0');
-        const hours = String(now.getHours()).padStart(2, '0');
-        const minutes = String(now.getMinutes()).padStart(2, '0');
-        scheduledTime.min = `${year}-${month}-${day}T${hours}:${minutes}`;
-    }
+    // Reset calendar selection only (don't reinitialize)
+    const selectedDays = document.querySelectorAll('.week-calendar-day.selected');
+    selectedDays.forEach(day => day.classList.remove('selected'));
+}
+
+function initializeNewPostView() {
+    // Initialize the new post form on first load
+    // Do not reinitialize calendar - it's already initialized in setupViewListeners()
 }
 
 // Instagram Functions

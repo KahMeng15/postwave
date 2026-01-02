@@ -279,7 +279,7 @@ netstat -ano | findstr :5000  # Windows
 - Check Instagram API rate limits
 
 ### Images not uploading
-- Max 10 images per post
+- Max 20 images per post
 - Supported: JPG, PNG, GIF
 - Auto-optimized to 1080px max, 8MB limit
 - Check `uploads/` folder permissions
@@ -324,7 +324,7 @@ docker-compose ps
 - Carousels: 2-10 items
 
 **App Limits:**
-- Max 10 images per post
+- Max 20 images per post
 - Caption: 2200 characters
 - Image size: Auto-optimized to 8MB, 1080px
 

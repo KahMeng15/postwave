@@ -9,11 +9,11 @@
                 <div class="card-body">
                     <form id="newPostForm">
                         <div class="form-group">
-                            <label>Media Files (1-10 images)</label>
+                            <label>Media Files (1-20 images)</label>
                             <div id="dropZone" class="drop-zone">
                                 <div class="drop-zone-icon">📤</div>
                                 <div class="drop-zone-text">Drag & drop images here</div>
-                                <div class="drop-zone-hint">or click to browse (Max 10 images)</div>
+                                <div class="drop-zone-hint">or click to browse (Max 20 images)</div>
                             </div>
                             <input type="file" id="mediaFiles" multiple accept="image/*,video/*" required style="display: none;">
                             <div id="mediaPreview" class="media-preview"></div>
@@ -28,8 +28,31 @@
                         </div>
                         
                         <div class="form-group">
-                            <label>Schedule Date & Time</label>
-                            <input type="datetime-local" id="scheduledTime" required>
+                            <label>Schedule Date</label>
+                            <div class="week-calendar-controls">
+                                <button type="button" id="prevWeek" class="week-nav-btn">← Previous Week</button>
+                                <span id="weekMonthDisplay" class="week-month-display"></span>
+                                <button type="button" id="nextWeek" class="week-nav-btn">Next Week →</button>
+                            </div>
+                            <div id="weekCalendar" class="week-calendar"></div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Posting Time</label>
+                            <div class="time-period-selector">
+                                <select id="timePeriod" required>
+                                    <option value="">Select a time</option>
+                                    <option value="morning">Morning - 9:00 AM</option>
+                                    <option value="afternoon">Middle of the Day - 12:00 PM</option>
+                                    <option value="evening">Afternoon - 5:00 PM</option>
+                                    <option value="night">Night - 8:00 PM</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Or set Date & Time Manually</label>
+                            <input type="datetime-local" id="scheduledTime" placeholder="Select date and time">
                         </div>
                         
                         <div class="form-actions">

@@ -1080,3 +1080,149 @@ textarea {
 .view-header h1 {
     margin: 0;
 }
+/* Week Calendar */
+.week-calendar-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    gap: 1rem;
+}
+
+.week-nav-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    background-color: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.week-nav-btn:hover {
+    border-color: var(--primary-color);
+    background-color: rgba(79, 70, 229, 0.05);
+}
+
+.week-nav-btn:active {
+    transform: scale(0.98);
+}
+
+.week-month-display {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 150px;
+    text-align: center;
+}
+
+.week-calendar {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.week-calendar-day {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    background-color: var(--surface);
+    position: relative;
+}
+
+.week-calendar-day:hover:not(.disabled) {
+    border-color: var(--primary-color);
+    background-color: rgba(79, 70, 229, 0.05);
+}
+
+.week-calendar-day.selected {
+    border-color: var(--primary-color);
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.week-calendar-day.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background-color: #f0f0f0;
+}
+
+[data-theme="dark"] .week-calendar-day.disabled {
+    background-color: #2a2a2a;
+}
+
+.week-calendar-day .day-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.week-calendar-day .day-number {
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.week-calendar-day .month-name {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+.week-calendar-day .scheduled-count {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background-color: var(--warning-color);
+    color: white;
+    font-size: 0.75rem;
+    font-weight: bold;
+    padding: 0.25rem 0.5rem;
+    border-radius: 50%;
+    min-width: 20px;
+    text-align: center;
+}
+
+[data-theme="dark"] .week-calendar-day {
+    background-color: var(--surface);
+}
+
+[data-theme="dark"] .week-calendar-day:hover:not(.disabled) {
+    background-color: rgba(99, 102, 241, 0.1);
+}
+
+/* Time Period Selector */
+.time-period-selector {
+    display: flex;
+    flex-direction: column;
+}
+
+.time-period-selector select {
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    background-color: var(--surface);
+    color: var(--text-primary);
+    font-size: 1rem;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.time-period-selector select:hover {
+    border-color: var(--primary-color);
+}
+
+.time-period-selector select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
