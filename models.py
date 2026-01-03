@@ -18,6 +18,7 @@ class User(db.Model):
     instagram_account_id = db.Column(db.String(255), nullable=True)
     instagram_access_token = db.Column(db.Text, nullable=True)
     instagram_username = db.Column(db.String(255), nullable=True)
+    instagram_profile_picture = db.Column(db.Text, nullable=True)  # Cached profile picture URL
     token_expires_at = db.Column(db.DateTime, nullable=True)
     
     # Relationships
@@ -36,7 +37,8 @@ class User(db.Model):
             'email': self.email,
             'created_at': self.created_at.isoformat(),
             'instagram_connected': bool(self.instagram_account_id),
-            'instagram_username': self.instagram_username
+            'instagram_username': self.instagram_username,
+            'profile_picture': self.instagram_profile_picture
         }
 
 

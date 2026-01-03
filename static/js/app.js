@@ -3,13 +3,14 @@ const API_BASE = '/api';
 
 // State
 let currentUser = null;
+let userProfileData = null; // Cache for profile picture and username
 let selectedFiles = [];
 let currentTheme = localStorage.getItem('theme') || 'light';
 let navbarListenersSetup = false; // Track if navbar listeners are already set up
 let calendarWeekOffset = 0; // Track which week is being displayed (0 = current week)
 let calendarInitialized = false; // Track if calendar has been initialized for this view
 let currentCarouselIndex = 0; // Track current image in carousel
-let selectedAspectRatio = 'original'; // Track selected aspect ratio
+let selectedAspectRatio = 'original'; // ASPECT RATIO FEATURE DISABLED - Defaulted to 'original'
 let draggedItemIndex = null; // Track dragged item during reordering
 let currentCropIndex = null; // Track which image is being cropped
 let cropData = {}; // Store crop data for images
@@ -265,6 +266,9 @@ function setupViewListeners() {
     if (newPostForm) newPostForm.addEventListener('submit', handleCreatePost);
     if (saveDraftBtn) saveDraftBtn.addEventListener('click', () => handleCreatePost(null, 'draft'));
     
+    // Update profile picture preview when view is shown
+    updateProfilePicturePreview();
+    
     // Drag and drop
     if (document.getElementById('dropZone')) setupDragAndDrop();
     
@@ -294,8 +298,9 @@ function setupViewListeners() {
     if (scheduledTime) scheduledTime.addEventListener('change', handleManualDateTimeChange);
     if (prevWeekBtn) prevWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(-1); });
     if (nextWeekBtn) nextWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(1); });
-    if (aspectRatioSelect) aspectRatioSelect.addEventListener('change', handleAspectRatioChange);
-    if (customAspectInput) customAspectInput.addEventListener('change', () => { displayMediaPreview(); updatePreview(); });
+    // ASPECT RATIO FEATURE DISABLED - TODO: Fix aspect ratio switching issues
+    // if (aspectRatioSelect) aspectRatioSelect.addEventListener('change', handleAspectRatioChange);
+    // if (customAspectInput) customAspectInput.addEventListener('change', () => { displayMediaPreview(); updatePreview(); });
     if (carouselPrev) carouselPrev.addEventListener('click', (e) => { e.preventDefault(); navigateCarousel(-1); });
     if (carouselNext) carouselNext.addEventListener('click', (e) => { e.preventDefault(); navigateCarousel(1); });
     
@@ -303,10 +308,12 @@ function setupViewListeners() {
     const connectInstagramBtn = document.getElementById('connectInstagram');
     const disconnectInstagramBtn = document.getElementById('disconnectInstagram');
     const instagramConfigForm = document.getElementById('instagramConfigForm');
+    const fetchAccountIdBtn = document.getElementById('fetchAccountIdBtn');
     
     if (connectInstagramBtn) connectInstagramBtn.addEventListener('click', () => navigateTo('/settings'));
     if (disconnectInstagramBtn) disconnectInstagramBtn.addEventListener('click', disconnectInstagram);
     if (instagramConfigForm) instagramConfigForm.addEventListener('submit', connectInstagram);
+    if (fetchAccountIdBtn) fetchAccountIdBtn.addEventListener('click', fetchInstagramAccountId);
     
     // Settings
     const changePasswordForm = document.getElementById('changePasswordForm');
@@ -790,10 +797,30 @@ async function fetchCurrentUser() {
         
         if (response.ok) {
             currentUser = data;
+            
+            // Cache profile data for preview
+            userProfileData = {
+                username: data.instagram_username || data.username,
+                profilePicture: data.profile_picture || null
+            };
+            
             const navUsername = document.getElementById('navUsername');
             const previewUsername = document.getElementById('previewUsername');
             if (navUsername) navUsername.textContent = data.username;
-            if (previewUsername) previewUsername.textContent = data.instagram_username || data.username;
+            if (previewUsername) previewUsername.textContent = userProfileData.username;
+            
+            // Fetch profile picture if user has Instagram connected and no picture cached yet
+            if (data.instagram_connected && !data.profile_picture) {
+                try {
+                    await fetchProfilePicture();
+                } catch (error) {
+                    console.warn('Failed to fetch profile picture:', error);
+                    // Continue anyway - the preview can work without profile picture
+                }
+            }
+            
+            // Update profile picture in preview
+            updateProfilePicturePreview();
             
             // Don't call navigateTo here, let handleRoute manage it
             const navbar = document.getElementById('navbar');
@@ -805,6 +832,57 @@ async function fetchCurrentUser() {
     } catch (error) {
         localStorage.removeItem('access_token');
         navigateTo('/login');
+    }
+}
+
+function updateProfilePicturePreview() {
+    if (!userProfileData) return;
+    
+    // Update username in preview
+    const previewUsername = document.getElementById('previewUsername');
+    if (previewUsername && userProfileData.username) {
+        previewUsername.textContent = userProfileData.username;
+    }
+    
+    const avatarEl = document.querySelector('.ig-avatar');
+    if (!avatarEl) return;
+    
+    if (userProfileData.profilePicture) {
+        avatarEl.style.backgroundImage = `url('${userProfileData.profilePicture}')`;
+        avatarEl.style.backgroundSize = 'cover';
+        avatarEl.style.backgroundPosition = 'center';
+        avatarEl.textContent = '';
+    } else {
+        // Fallback to initial-based avatar
+        avatarEl.style.backgroundImage = 'none';
+        if (userProfileData.username) {
+            avatarEl.textContent = userProfileData.username.charAt(0).toUpperCase();
+        }
+    }
+}
+
+async function fetchProfilePicture() {
+    try {
+        const response = await apiCall('/instagram/fetch-profile-picture', {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.profile_picture_url) {
+            // Update profile data cache
+            if (userProfileData) {
+                userProfileData.profilePicture = data.profile_picture_url;
+            }
+            
+            // Update preview immediately
+            updateProfilePicturePreview();
+            
+            console.log('Profile picture fetched and cached successfully');
+        }
+    } catch (error) {
+        console.warn('Failed to fetch profile picture:', error);
+        // Don't throw - this is non-blocking
     }
 }
 
@@ -1431,75 +1509,270 @@ function displayMediaPreview() {
     // Normalize aspect ratio for CSS
     const normalizedRatio = normalizeAspectRatio(aspectRatio);
     
+    // Create placeholder divs in correct order first
+    const divs = [];
+    selectedFiles.forEach((file, index) => {
+        const div = document.createElement('div');
+        div.className = 'media-preview-item';
+        div.setAttribute('data-index', index);
+        div.style.aspectRatio = normalizedRatio;
+        
+        container.appendChild(div);
+        divs[index] = div;
+    });
+    
+    // Now load images and populate in correct order
     selectedFiles.forEach((file, index) => {
         const reader = new FileReader();
         reader.onload = (e) => {
-            const div = document.createElement('div');
-            div.className = 'media-preview-item';
-            div.draggable = true;
-            div.setAttribute('data-index', index);
-            
-            // Apply aspect ratio styling to container
-            div.style.aspectRatio = normalizedRatio;
-            
-            div.innerHTML = `
-                <img src="${e.target.result}" alt="Preview ${index + 1}" onclick="openCropModal(${index})">
-                <button type="button" class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
-            `;
-            
-            // Drag and drop event listeners
-            div.addEventListener('dragstart', handleDragStart);
-            div.addEventListener('dragover', handleDragOver);
-            div.addEventListener('drop', handleDrop);
-            div.addEventListener('dragleave', handleDragLeave);
-            div.addEventListener('dragend', handleDragEnd);
-            
-            container.appendChild(div);
+            const div = divs[index];
+            if (div) {
+                const img = new Image();
+                img.onload = () => {
+                    // Create canvas for cropped preview if crop data exists
+                    if (cropData[index] && cropData[index].cropped) {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        // Get current aspect ratio from dropdown
+                        let aspectRatio = document.getElementById('aspectRatio').value;
+                        if (aspectRatio === 'custom') {
+                            const customRatio = document.getElementById('customAspectRatio').value;
+                            aspectRatio = customRatio || '1:1';
+                        }
+                        
+                        // Parse target aspect ratio
+                        let targetRatio;
+                        if (aspectRatio === 'original') {
+                            targetRatio = img.width / img.height;
+                        } else if (aspectRatio.includes(':')) {
+                            const [w, h] = aspectRatio.split(':').map(parseFloat);
+                            targetRatio = w / h;
+                        } else {
+                            targetRatio = parseFloat(aspectRatio);
+                        }
+                        
+                        // Get stored center point
+                        const centerX = cropData[index].centerX;
+                        const centerY = cropData[index].centerY;
+                        
+                        // Calculate box dimensions based on current aspect ratio
+                        // Try to keep the stored size, but adjust to match current aspect ratio
+                        let boxWidth, boxHeight;
+                        const storedBoxWidth = cropData[index].boxWidth;
+                        const storedBoxHeight = cropData[index].boxHeight;
+                        
+                        // Try to maximize crop area while maintaining aspect ratio
+                        const possibleWidthFromHeight = storedBoxHeight * targetRatio;
+                        const possibleHeightFromWidth = storedBoxWidth / targetRatio;
+                        
+                        if (possibleWidthFromHeight <= img.width) {
+                            boxWidth = possibleWidthFromHeight;
+                            boxHeight = storedBoxHeight;
+                        } else if (possibleHeightFromWidth <= img.height) {
+                            boxWidth = storedBoxWidth;
+                            boxHeight = possibleHeightFromWidth;
+                        } else {
+                            // Scale down
+                            if (storedBoxWidth / img.width > storedBoxHeight / img.height) {
+                                boxWidth = storedBoxWidth;
+                                boxHeight = boxWidth / targetRatio;
+                            } else {
+                                boxHeight = storedBoxHeight;
+                                boxWidth = boxHeight * targetRatio;
+                            }
+                        }
+                        
+                        // Calculate crop position from center
+                        const cropX = centerX - boxWidth / 2;
+                        const cropY = centerY - boxHeight / 2;
+                        
+                        // Clamp to image bounds
+                        const clampedX = Math.max(0, Math.min(cropX, img.width - boxWidth));
+                        const clampedY = Math.max(0, Math.min(cropY, img.height - boxHeight));
+                        const clampedW = Math.min(boxWidth, img.width - clampedX);
+                        const clampedH = Math.min(boxHeight, img.height - clampedY);
+                        
+                        canvas.width = clampedW;
+                        canvas.height = clampedH;
+                        ctx.drawImage(img, clampedX, clampedY, clampedW, clampedH, 0, 0, clampedW, clampedH);
+                        
+                        div.innerHTML = `
+                            <img src="${canvas.toDataURL('image/jpeg')}" alt="Preview ${index + 1}" onclick="openCropModal(${index})">
+                            <button type="button" class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
+                            <div class="crop-badge" title="Cropped - click image to re-crop">✓</div>
+                            <div class="media-reorder-controls">
+                                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaToFirst(${index})" ${index === 0 ? 'disabled' : ''} title="Move to first">⏮</button>
+                                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaUp(${index})" ${index === 0 ? 'disabled' : ''} title="Move left">←</button>
+                                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaDown(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move right">→</button>
+                                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaToLast(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move to last">⏭</button>
+                            </div>
+                        `;
+                    } else {
+                        div.innerHTML = `
+                            <img src="${e.target.result}" alt="Preview ${index + 1}" onclick="openCropModal(${index})">
+                            <button type="button" class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
+                            <div class="media-reorder-controls">
+                                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaToFirst(${index})" ${index === 0 ? 'disabled' : ''} title="Move to first">⏮</button>
+                                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaUp(${index})" ${index === 0 ? 'disabled' : ''} title="Move left">←</button>
+                                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaDown(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move right">→</button>
+                                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaToLast(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move to last">⏭</button>
+                            </div>
+                        `;
+                    }
+                };
+                img.src = e.target.result;
+            }
         };
         reader.readAsDataURL(file);
     });
 }
 
-function handleDragStart(e) {
-    draggedItemIndex = parseInt(e.target.closest('.media-preview-item').getAttribute('data-index'));
-    e.target.closest('.media-preview-item').classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-}
-
-function handleDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    e.target.closest('.media-preview-item')?.classList.add('drag-over');
-}
-
-function handleDragLeave(e) {
-    e.target.closest('.media-preview-item')?.classList.remove('drag-over');
-}
-
-function handleDrop(e) {
-    e.preventDefault();
-    const targetItem = e.target.closest('.media-preview-item');
-    const targetIndex = parseInt(targetItem.getAttribute('data-index'));
-    
-    if (draggedItemIndex !== targetIndex && draggedItemIndex !== null) {
-        // Swap items
-        const temp = selectedFiles[draggedItemIndex];
-        selectedFiles[draggedItemIndex] = selectedFiles[targetIndex];
-        selectedFiles[targetIndex] = temp;
+function moveMediaUp(index) {
+    if (index > 0) {
+        // Add animation to container
+        const container = document.getElementById('mediaPreview');
+        container.classList.add('reordering');
         
-        displayMediaPreview();
-        updatePreview();
+        // Swap with previous item
+        const temp = selectedFiles[index];
+        selectedFiles[index] = selectedFiles[index - 1];
+        selectedFiles[index - 1] = temp;
+        
+        // Swap crop data too
+        const tempCrop = cropData[index];
+        cropData[index] = cropData[index - 1];
+        cropData[index - 1] = tempCrop;
+        
+        // Update carousel index if needed
+        if (currentCarouselIndex === index) {
+            currentCarouselIndex = index - 1;
+        } else if (currentCarouselIndex === index - 1) {
+            currentCarouselIndex = index;
+        }
+        
+        setTimeout(() => {
+            displayMediaPreview();
+            updatePreview();
+            container.classList.remove('reordering');
+        }, 150);
     }
-    
-    targetItem?.classList.remove('drag-over');
 }
 
-function handleDragEnd(e) {
-    e.target.closest('.media-preview-item')?.classList.remove('dragging');
-    draggedItemIndex = null;
-    document.querySelectorAll('.media-preview-item').forEach(item => {
-        item.classList.remove('drag-over', 'dragging');
-    });
+function moveMediaDown(index) {
+    if (index < selectedFiles.length - 1) {
+        // Add animation to container
+        const container = document.getElementById('mediaPreview');
+        container.classList.add('reordering');
+        
+        // Swap with next item
+        const temp = selectedFiles[index];
+        selectedFiles[index] = selectedFiles[index + 1];
+        selectedFiles[index + 1] = temp;
+        
+        // Swap crop data too
+        const tempCrop = cropData[index];
+        cropData[index] = cropData[index + 1];
+        cropData[index + 1] = tempCrop;
+        
+        // Update carousel index if needed
+        if (currentCarouselIndex === index) {
+            currentCarouselIndex = index + 1;
+        } else if (currentCarouselIndex === index + 1) {
+            currentCarouselIndex = index;
+        }
+        
+        setTimeout(() => {
+            displayMediaPreview();
+            updatePreview();
+            container.classList.remove('reordering');
+        }, 150);
+    }
+}
+
+function moveMediaToFirst(index) {
+    if (index > 0) {
+        const container = document.getElementById('mediaPreview');
+        container.classList.add('reordering');
+        
+        // Move to first
+        const item = selectedFiles.splice(index, 1)[0];
+        selectedFiles.unshift(item);
+        
+        const itemCrop = cropData[index];
+        delete cropData[index];
+        
+        // Rebuild crop indices
+        const newCropData = {};
+        Object.keys(cropData).forEach(key => {
+            const idx = parseInt(key);
+            if (idx < index) {
+                newCropData[idx + 1] = cropData[idx];
+            } else {
+                newCropData[idx] = cropData[idx];
+            }
+        });
+        if (itemCrop) {
+            newCropData[0] = itemCrop;
+        }
+        cropData = newCropData;
+        
+        // Update carousel index
+        if (currentCarouselIndex === index) {
+            currentCarouselIndex = 0;
+        } else if (currentCarouselIndex < index) {
+            currentCarouselIndex++;
+        }
+        
+        setTimeout(() => {
+            displayMediaPreview();
+            updatePreview();
+            container.classList.remove('reordering');
+        }, 150);
+    }
+}
+
+function moveMediaToLast(index) {
+    if (index < selectedFiles.length - 1) {
+        const container = document.getElementById('mediaPreview');
+        container.classList.add('reordering');
+        
+        // Move to last
+        const item = selectedFiles.splice(index, 1)[0];
+        selectedFiles.push(item);
+        
+        const itemCrop = cropData[index];
+        delete cropData[index];
+        
+        // Rebuild crop indices
+        const newCropData = {};
+        const lastIndex = selectedFiles.length - 1;
+        Object.keys(cropData).forEach(key => {
+            const idx = parseInt(key);
+            if (idx > index) {
+                newCropData[idx - 1] = cropData[idx];
+            } else {
+                newCropData[idx] = cropData[idx];
+            }
+        });
+        if (itemCrop) {
+            newCropData[lastIndex] = itemCrop;
+        }
+        cropData = newCropData;
+        
+        // Update carousel index
+        if (currentCarouselIndex === index) {
+            currentCarouselIndex = lastIndex;
+        } else if (currentCarouselIndex > index) {
+            currentCarouselIndex--;
+        }
+        
+        setTimeout(() => {
+            displayMediaPreview();
+            updatePreview();
+            container.classList.remove('reordering');
+        }, 150);
+    }
 }
 
 function removeMedia(index) {
@@ -1515,8 +1788,13 @@ function updatePreview() {
     const timePeriod = document.getElementById('timePeriod').value;
     const scheduledTimeInput = document.getElementById('scheduledTime').value;
     
-    // Update caption preview
-    document.getElementById('previewCaption').textContent = caption || 'Your caption will appear here...';
+    // Update caption preview smoothly
+    const captionEl = document.getElementById('previewCaption');
+    if (captionEl.textContent !== caption && caption.length > 0) {
+        captionEl.textContent = caption;
+    } else if (caption.length === 0) {
+        captionEl.textContent = 'Your caption will appear here...';
+    }
     
     // Update character count
     document.getElementById('captionCount').textContent = caption.length;
@@ -1542,7 +1820,6 @@ function updatePreview() {
     
     // Update images preview with carousel
     const previewContainer = document.getElementById('previewImages');
-    previewContainer.innerHTML = '';
     
     // Apply aspect ratio styling
     let aspectRatio = document.getElementById('aspectRatio').value;
@@ -1556,26 +1833,103 @@ function updatePreview() {
     const normalizedRatio = normalizeAspectRatio(aspectRatio);
     previewContainer.style.aspectRatio = normalizedRatio;
     
-    // Also apply aspect ratio to media preview items
-    document.querySelectorAll('.media-preview-item').forEach(item => {
-        item.style.aspectRatio = normalizedRatio;
-    });
-    
     if (selectedFiles.length > 0) {
         // Only show current image in carousel
         const currentFile = selectedFiles[currentCarouselIndex];
         const reader = new FileReader();
         reader.onload = (e) => {
-            const img = document.createElement('img');
+            const img = new Image();
+            img.onload = () => {
+                // Create canvas for preview, applying crop if it exists
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                if (cropData[currentCarouselIndex] && cropData[currentCarouselIndex].cropped) {
+                    // Get current aspect ratio from dropdown
+                    let aspectRatio = document.getElementById('aspectRatio').value;
+                    if (aspectRatio === 'custom') {
+                        const customRatio = document.getElementById('customAspectRatio').value;
+                        aspectRatio = customRatio || '1:1';
+                    }
+                    
+                    // Parse target aspect ratio
+                    let targetRatio;
+                    if (aspectRatio === 'original') {
+                        targetRatio = img.width / img.height;
+                    } else if (aspectRatio.includes(':')) {
+                        const [w, h] = aspectRatio.split(':').map(parseFloat);
+                        targetRatio = w / h;
+                    } else {
+                        targetRatio = parseFloat(aspectRatio);
+                    }
+                    
+                    // Get stored center point
+                    const centerX = cropData[currentCarouselIndex].centerX;
+                    const centerY = cropData[currentCarouselIndex].centerY;
+                    
+                    // Calculate box dimensions based on current aspect ratio
+                    let boxWidth, boxHeight;
+                    const storedBoxWidth = cropData[currentCarouselIndex].boxWidth;
+                    const storedBoxHeight = cropData[currentCarouselIndex].boxHeight;
+                    
+                    // Try to maximize crop area while maintaining aspect ratio
+                    const possibleWidthFromHeight = storedBoxHeight * targetRatio;
+                    const possibleHeightFromWidth = storedBoxWidth / targetRatio;
+                    
+                    if (possibleWidthFromHeight <= img.width) {
+                        boxWidth = possibleWidthFromHeight;
+                        boxHeight = storedBoxHeight;
+                    } else if (possibleHeightFromWidth <= img.height) {
+                        boxWidth = storedBoxWidth;
+                        boxHeight = possibleHeightFromWidth;
+                    } else {
+                        // Scale down
+                        if (storedBoxWidth / img.width > storedBoxHeight / img.height) {
+                            boxWidth = storedBoxWidth;
+                            boxHeight = boxWidth / targetRatio;
+                        } else {
+                            boxHeight = storedBoxHeight;
+                            boxWidth = boxHeight * targetRatio;
+                        }
+                    }
+                    
+                    // Calculate crop position from center
+                    const cropX = centerX - boxWidth / 2;
+                    const cropY = centerY - boxHeight / 2;
+                    
+                    // Clamp to image bounds
+                    const clampedX = Math.max(0, Math.min(cropX, img.width - boxWidth));
+                    const clampedY = Math.max(0, Math.min(cropY, img.height - boxHeight));
+                    const clampedW = Math.min(boxWidth, img.width - clampedX);
+                    const clampedH = Math.min(boxHeight, img.height - clampedY);
+                    
+                    canvas.width = clampedW;
+                    canvas.height = clampedH;
+                    ctx.drawImage(img, clampedX, clampedY, clampedW, clampedH, 0, 0, clampedW, clampedH);
+                } else {
+                    // No crop, show full image
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                }
+                
+                // Update or create image smoothly
+                let previewImg = previewContainer.querySelector('img');
+                if (!previewImg) {
+                    previewImg = document.createElement('img');
+                    previewImg.style.width = '100%';
+                    previewImg.style.height = '100%';
+                    previewImg.style.objectFit = 'cover';
+                    previewContainer.innerHTML = '';
+                    previewContainer.appendChild(previewImg);
+                }
+                previewImg.src = canvas.toDataURL('image/jpeg');
+            };
             img.src = e.target.result;
-            img.style.width = '100%';
-            img.style.height = '100%';
-            img.style.objectFit = 'cover';
-            previewContainer.appendChild(img);
         };
         reader.readAsDataURL(currentFile);
         
-        // Show/hide carousel buttons based on image count
+        // Show/hide carousel buttons and update indicators
         const carouselPrev = document.getElementById('carouselPrev');
         const carouselNext = document.getElementById('carouselNext');
         const indicatorsContainer = document.getElementById('carouselIndicators');
@@ -1584,17 +1938,27 @@ function updatePreview() {
             if (carouselPrev) carouselPrev.style.display = 'flex';
             if (carouselNext) carouselNext.style.display = 'flex';
             
-            // Update indicators
-            indicatorsContainer.innerHTML = '';
-            selectedFiles.forEach((_, idx) => {
-                const indicator = document.createElement('div');
-                indicator.className = `carousel-indicator ${idx === currentCarouselIndex ? 'active' : ''}`;
-                indicator.addEventListener('click', () => {
-                    currentCarouselIndex = idx;
-                    updatePreview();
+            // Update only indicators that changed
+            const indicators = indicatorsContainer.querySelectorAll('.carousel-indicator');
+            
+            // If count changed, rebuild
+            if (indicators.length !== selectedFiles.length) {
+                indicatorsContainer.innerHTML = '';
+                selectedFiles.forEach((_, idx) => {
+                    const indicator = document.createElement('div');
+                    indicator.className = `carousel-indicator ${idx === currentCarouselIndex ? 'active' : ''}`;
+                    indicator.addEventListener('click', () => {
+                        currentCarouselIndex = idx;
+                        updatePreview();
+                    });
+                    indicatorsContainer.appendChild(indicator);
                 });
-                indicatorsContainer.appendChild(indicator);
-            });
+            } else {
+                // Just update active state
+                indicators.forEach((indicator, idx) => {
+                    indicator.classList.toggle('active', idx === currentCarouselIndex);
+                });
+            }
         } else {
             if (carouselPrev) carouselPrev.style.display = 'none';
             if (carouselNext) carouselNext.style.display = 'none';
@@ -1832,33 +2196,84 @@ async function handleCreatePost(e, status = 'scheduled') {
         return;
     }
     
+    // Get aspect ratio info
+    let aspectRatio = document.getElementById('aspectRatio').value;
+    if (aspectRatio === 'custom') {
+        const customRatio = document.getElementById('customAspectRatio').value;
+        aspectRatio = customRatio || 'original';
+    }
+    
+    // Apply crops to files that need cropping
     const formData = new FormData();
     formData.append('caption', caption);
     formData.append('scheduled_time', scheduledDateTime.toISOString());
     formData.append('status', status);
+    formData.append('aspect_ratio', aspectRatio);
     
-    selectedFiles.forEach((file) => {
-        formData.append('media', file);
-    });
+    // Process each file with crop data if available
+    let filesProcessed = 0;
+    let processComplete = false;
     
-    try {
-        const response = await apiCall('/posts/', {
-            method: 'POST',
-            body: formData,
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-            showToast(`Post ${status === 'draft' ? 'saved as draft' : 'scheduled'} successfully!`, 'success');
-            resetPostForm();
-            navigateTo('/dashboard');
-        } else {
-            showToast(data.error || 'Failed to create post', 'error');
+    const processFiles = async () => {
+        for (let index = 0; index < selectedFiles.length; index++) {
+            const file = selectedFiles[index];
+            
+            if (cropData[index] && cropData[index].cropped) {
+                // Apply crop and get cropped blob
+                const croppedBlob = await applyCropToFile(file, cropData[index]);
+                const croppedFile = new File([croppedBlob], file.name, { type: 'image/jpeg' });
+                formData.append('media', croppedFile);
+            } else {
+                // Use original file
+                formData.append('media', file);
+            }
         }
-    } catch (error) {
-        showToast('Failed to create post', 'error');
-    }
+        
+        // Send to backend
+        try {
+            const response = await apiCall('/posts/', {
+                method: 'POST',
+                body: formData,
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                showToast(`Post ${status === 'draft' ? 'saved as draft' : 'scheduled'} successfully!`, 'success');
+                resetPostForm();
+                navigateTo('/dashboard');
+            } else {
+                showToast(data.error || 'Failed to create post', 'error');
+            }
+        } catch (error) {
+            showToast('Failed to create post', 'error');
+        }
+    };
+    
+    processFiles();
+}
+
+function applyCropToFile(file, cropData) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                canvas.width = cropData.width;
+                canvas.height = cropData.height;
+                ctx.drawImage(img, cropData.x, cropData.y, cropData.width, cropData.height, 0, 0, cropData.width, cropData.height);
+                
+                canvas.toBlob(resolve, 'image/jpeg', 0.95);
+            };
+            img.onerror = reject;
+            img.src = e.target.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
 }
 
 function resetPostForm() {
@@ -1983,6 +2398,76 @@ async function connectInstagram(e) {
             error.message || 'An unexpected error occurred',
             'Check the browser console (F12) for more details'
         );
+    }
+}
+
+// Fetch Instagram Account ID from access token
+async function fetchInstagramAccountId(e) {
+    e.preventDefault();
+    
+    const accessToken = document.getElementById('accessToken').value;
+    const fetchBtnText = document.getElementById('fetchBtnText');
+    const fetchBtnSpinner = document.getElementById('fetchBtnSpinner');
+    const fetchAccountIdBtn = document.getElementById('fetchAccountIdBtn');
+    
+    if (!accessToken) {
+        showToast('Please enter an access token first', 'error');
+        return;
+    }
+    
+    try {
+        console.log('=== FETCH ACCOUNT ID START ===');
+        console.log('Access Token:', accessToken.substring(0, 20) + '...');
+        
+        // Show loading state
+        fetchBtnText.style.display = 'none';
+        fetchBtnSpinner.style.display = 'inline';
+        fetchAccountIdBtn.disabled = true;
+        
+        const response = await apiCall('/instagram/fetch-account-id', {
+            method: 'POST',
+            body: JSON.stringify({
+                access_token: accessToken
+            }),
+        });
+        
+        const data = await response.json();
+        console.log('API Response Status:', response.status);
+        console.log('API Response Data:', data);
+        
+        if (response.ok) {
+            // Auto-populate the Instagram Account ID field
+            const instagramAccountIdField = document.getElementById('instagramAccountId');
+            instagramAccountIdField.value = data.instagram_account_id;
+            
+            showToast(`✅ Account ID fetched successfully!`, 'success');
+            console.log('✅ Account ID populated:', data.instagram_account_id);
+        } else {
+            let errorMsg = data.error || data.message || 'Failed to fetch account ID';
+            let errorDetails = data.details || '';
+            
+            console.error('❌ Fetch Error:', errorMsg);
+            console.error('Error Details:', errorDetails);
+            
+            showErrorModal(
+                'Failed to Fetch Account ID',
+                errorMsg,
+                errorDetails
+            );
+        }
+    } catch (error) {
+        console.error('❌ Fetch Exception:', error);
+        console.error('Error Stack:', error.stack);
+        showErrorModal(
+            'Fetch Error',
+            error.message || 'An unexpected error occurred',
+            'Check the browser console (F12) for more details'
+        );
+    } finally {
+        // Restore button state
+        fetchBtnText.style.display = 'inline';
+        fetchBtnSpinner.style.display = 'none';
+        fetchAccountIdBtn.disabled = false;
     }
 }
 
@@ -2134,161 +2619,466 @@ function closeModal() {
 let cropState = {
     startX: 0,
     startY: 0,
-    isDrawing: false,
-    cropBox: null
+    startWidth: 0,
+    startHeight: 0,
+    startLeft: 0,
+    startTop: 0,
+    isMoving: false,
+    isResizing: false,
+    resizeHandle: null,
+    cropBox: null,
+    imageData: null,
+    imageWidth: 0,
+    imageHeight: 0,
+    originalAspectRatio: 1
 };
 
 function openCropModal(index) {
     currentCropIndex = index;
     const modal = document.getElementById('cropModal');
     const cropImage = document.getElementById('cropImage');
-    const cropCanvas = document.getElementById('cropCanvas');
+    const cropBox = document.getElementById('cropBox');
     
     // Load the image
     const reader = new FileReader();
     reader.onload = (e) => {
         cropImage.src = e.target.result;
         cropImage.onload = () => {
-            // Draw image on canvas
-            const ctx = cropCanvas.getContext('2d');
-            cropCanvas.width = cropImage.width;
-            cropCanvas.height = cropImage.height;
-            ctx.drawImage(cropImage, 0, 0);
-            
-            // Initialize crop box at center
-            const boxSize = Math.min(cropCanvas.width, cropCanvas.height) * 0.8;
-            cropState.cropBox = {
-                x: (cropCanvas.width - boxSize) / 2,
-                y: (cropCanvas.height - boxSize) / 2,
-                width: boxSize,
-                height: boxSize
-            };
-            
-            drawCropBox();
+            setTimeout(() => {
+                const container = document.querySelector('.crop-container');
+                
+                const imageWidth = cropImage.offsetWidth;
+                const imageHeight = cropImage.offsetHeight;
+                const imageLeft = cropImage.offsetLeft;
+                const imageTop = cropImage.offsetTop;
+                
+                // Store original aspect ratio from the current image
+                const currentImageAspectRatio = imageWidth / imageHeight;
+                cropState.originalAspectRatio = currentImageAspectRatio;
+                
+                cropState.imageWidth = imageWidth;
+                cropState.imageHeight = imageHeight;
+                
+                // Get the selected aspect ratio from the dropdown
+                let aspectRatio = document.getElementById('aspectRatio').value;
+                if (aspectRatio === 'custom') {
+                    const customRatio = document.getElementById('customAspectRatio').value;
+                    aspectRatio = customRatio || 'original';
+                }
+                
+                // Determine the target aspect ratio (width / height)
+                let targetRatio;
+                if (aspectRatio === 'original') {
+                    targetRatio = currentImageAspectRatio;
+                    cropImage.style.aspectRatio = 'auto';
+                } else {
+                    // Normalize: "4:5" becomes 0.8, "1.91:1" becomes 1.91, etc.
+                    if (aspectRatio.includes(':')) {
+                        const [w, h] = aspectRatio.split(':').map(parseFloat);
+                        targetRatio = w / h;
+                    } else {
+                        targetRatio = parseFloat(aspectRatio);
+                    }
+                    // Set image aspect ratio to match the selected ratio
+                    cropImage.style.aspectRatio = targetRatio;
+                }
+                
+                // Calculate the maximum crop box that fits the image with the selected aspect ratio
+                let cropWidth, cropHeight;
+                
+                // Calculate maximum size while maintaining aspect ratio
+                if (imageWidth / imageHeight > targetRatio) {
+                    // Image is wider than aspect ratio, constrain by height
+                    cropHeight = imageHeight;
+                    cropWidth = cropHeight * targetRatio;
+                } else {
+                    // Image is taller than aspect ratio, constrain by width
+                    cropWidth = imageWidth;
+                    cropHeight = cropWidth / targetRatio;
+                }
+                
+                // Center the crop box
+                const cropLeft = imageLeft + (imageWidth - cropWidth) / 2;
+                const cropTop = imageTop + (imageHeight - cropHeight) / 2;
+                
+                cropState.cropBox = {
+                    x: cropLeft,
+                    y: cropTop,
+                    width: cropWidth,
+                    height: cropHeight
+                };
+                
+                // Check if there's already crop data for this image
+                if (cropData[index] && cropData[index].cropped) {
+                    // Restore previous crop settings from center point
+                    const prevCropData = cropData[index];
+                    const actualImageWidth = cropImage.naturalWidth;
+                    const actualImageHeight = cropImage.naturalHeight;
+                    const scaleX = imageWidth / actualImageWidth;
+                    const scaleY = imageHeight / actualImageHeight;
+                    
+                    // Convert center point and dimensions from actual to displayed coordinates
+                    const displayCenterX = prevCropData.centerX * scaleX;
+                    const displayCenterY = prevCropData.centerY * scaleY;
+                    const displayBoxWidth = prevCropData.boxWidth * scaleX;
+                    const displayBoxHeight = prevCropData.boxHeight * scaleY;
+                    
+                    // Calculate corner position from center
+                    const displayCropX = displayCenterX - displayBoxWidth / 2;
+                    const displayCropY = displayCenterY - displayBoxHeight / 2;
+                    
+                    cropState.cropBox = {
+                        x: imageLeft + displayCropX,
+                        y: imageTop + displayCropY,
+                        width: displayBoxWidth,
+                        height: displayBoxHeight
+                    };
+                    
+                    cropBox.style.left = (imageLeft + displayCropX) + 'px';
+                    cropBox.style.top = (imageTop + displayCropY) + 'px';
+                    cropBox.style.width = displayBoxWidth + 'px';
+                    cropBox.style.height = displayBoxHeight + 'px';
+                } else {
+                    // Position crop box with default settings
+                    cropBox.style.left = cropLeft + 'px';
+                    cropBox.style.top = cropTop + 'px';
+                    cropBox.style.width = cropWidth + 'px';
+                    cropBox.style.height = cropHeight + 'px';
+                }
+                
+                setupCropBoxListeners();
+            }, 100);
         };
     };
     
     reader.readAsDataURL(selectedFiles[index]);
     modal.style.display = 'flex';
+}
+
+function setupCropBoxListeners() {
+    const cropBox = document.getElementById('cropBox');
+    const handles = document.querySelectorAll('.crop-handle');
     
-    // Add canvas event listeners for drawing crop box
-    cropCanvas.addEventListener('mousedown', handleCropStart);
-    cropCanvas.addEventListener('mousemove', handleCropMove);
-    cropCanvas.addEventListener('mouseup', handleCropEnd);
-    cropCanvas.addEventListener('mouseleave', handleCropEnd);
+    // Main crop box drag
+    cropBox.addEventListener('mousedown', handleCropBoxMouseDown);
+    
+    // Handle resizing
+    handles.forEach(handle => {
+        handle.addEventListener('mousedown', handleHandleMouseDown);
+    });
+    
+    // Global mouse events
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+}
+
+function handleCropBoxMouseDown(e) {
+    if (e.target.classList.contains('crop-handle')) return;
+    
+    cropState.isMoving = true;
+    cropState.startX = e.clientX;
+    cropState.startY = e.clientY;
+    cropState.startLeft = cropState.cropBox.x;
+    cropState.startTop = cropState.cropBox.y;
+}
+
+function handleHandleMouseDown(e) {
+    e.preventDefault();
+    cropState.isResizing = true;
+    cropState.resizeHandle = e.target.className.match(/crop-handle-(.*)/)?.[1] || '';
+    cropState.startX = e.clientX;
+    cropState.startY = e.clientY;
+    cropState.startWidth = cropState.cropBox.width;
+    cropState.startHeight = cropState.cropBox.height;
+    cropState.startLeft = cropState.cropBox.x;
+    cropState.startTop = cropState.cropBox.y;
+}
+
+function handleMouseMove(e) {
+    if (!cropState.isMoving && !cropState.isResizing) return;
+    
+    const cropBox = document.getElementById('cropBox');
+    const container = document.querySelector('.crop-container');
+    const cropImage = document.getElementById('cropImage');
+    
+    const deltaX = e.clientX - cropState.startX;
+    const deltaY = e.clientY - cropState.startY;
+    
+    if (cropState.isMoving) {
+        // Move the crop box
+        let newX = cropState.startLeft + deltaX;
+        let newY = cropState.startTop + deltaY;
+        
+        // Constrain within image
+        const imageLeft = cropImage.offsetLeft;
+        const imageTop = cropImage.offsetTop;
+        const maxX = imageLeft + cropState.imageWidth - cropState.cropBox.width;
+        const maxY = imageTop + cropState.imageHeight - cropState.cropBox.height;
+        
+        newX = Math.max(imageLeft, Math.min(newX, maxX));
+        newY = Math.max(imageTop, Math.min(newY, maxY));
+        
+        cropBox.style.left = newX + 'px';
+        cropBox.style.top = newY + 'px';
+        
+        cropState.cropBox.x = newX;
+        cropState.cropBox.y = newY;
+    } else if (cropState.isResizing) {
+        // Resize the crop box
+        let newWidth = cropState.startWidth;
+        let newHeight = cropState.startHeight;
+        let newX = cropState.startLeft;
+        let newY = cropState.startTop;
+        
+        const handle = cropState.resizeHandle;
+        const minSize = 50;
+        
+        // Get aspect ratio for resize constraint
+        let aspectRatio = document.getElementById('aspectRatio').value;
+        if (aspectRatio === 'custom') {
+            const customRatio = document.getElementById('customAspectRatio').value;
+            aspectRatio = customRatio || '1:1';
+        }
+        
+        let targetRatio;
+        if (aspectRatio === 'original') {
+            targetRatio = cropState.originalAspectRatio;
+        } else {
+            targetRatio = parseFloat(normalizeAspectRatio(aspectRatio));
+        }
+        
+        // Resize based on handle
+        if (handle.includes('e')) {
+            newWidth = Math.max(minSize, cropState.startWidth + deltaX);
+        }
+        if (handle.includes('s')) {
+            newHeight = Math.max(minSize, cropState.startHeight + deltaY);
+        }
+        if (handle.includes('w')) {
+            newWidth = Math.max(minSize, cropState.startWidth - deltaX);
+            newX = cropState.startLeft + deltaX;
+        }
+        if (handle.includes('n')) {
+            newHeight = Math.max(minSize, cropState.startHeight - deltaY);
+            newY = cropState.startTop + deltaY;
+        }
+        
+        // Maintain aspect ratio
+        if (handle.includes('e') || handle.includes('w')) {
+            newHeight = newWidth / targetRatio;
+        } else if (handle.includes('s') || handle.includes('n')) {
+            newWidth = newHeight * targetRatio;
+        }
+        
+        // Constrain within image
+        const imageLeft = cropImage.offsetLeft;
+        const imageTop = cropImage.offsetTop;
+        const imageRight = imageLeft + cropState.imageWidth;
+        const imageBottom = imageTop + cropState.imageHeight;
+        
+        // Ensure crop box stays within image
+        if (newX < imageLeft) {
+            newX = imageLeft;
+            newWidth = Math.min(newWidth, imageRight - newX);
+        }
+        if (newY < imageTop) {
+            newY = imageTop;
+            newHeight = Math.min(newHeight, imageBottom - newY);
+        }
+        if (newX + newWidth > imageRight) {
+            newWidth = imageRight - newX;
+            newHeight = newWidth / targetRatio;
+        }
+        if (newY + newHeight > imageBottom) {
+            newHeight = imageBottom - newY;
+            newWidth = newHeight * targetRatio;
+        }
+        
+        cropBox.style.width = newWidth + 'px';
+        cropBox.style.height = newHeight + 'px';
+        cropBox.style.left = newX + 'px';
+        cropBox.style.top = newY + 'px';
+        
+        cropState.cropBox.width = newWidth;
+        cropState.cropBox.height = newHeight;
+        cropState.cropBox.x = newX;
+        cropState.cropBox.y = newY;
+    }
+}
+
+function handleMouseUp() {
+    cropState.isMoving = false;
+    cropState.isResizing = false;
+    cropState.resizeHandle = null;
 }
 
 function closeCropModal() {
     const modal = document.getElementById('cropModal');
     modal.style.display = 'none';
     currentCropIndex = null;
-    cropState.isDrawing = false;
     
     // Remove event listeners
-    const cropCanvas = document.getElementById('cropCanvas');
-    cropCanvas.removeEventListener('mousedown', handleCropStart);
-    cropCanvas.removeEventListener('mousemove', handleCropMove);
-    cropCanvas.removeEventListener('mouseup', handleCropEnd);
-    cropCanvas.removeEventListener('mouseleave', handleCropEnd);
-}
-
-function drawCropBox() {
-    const cropCanvas = document.getElementById('cropCanvas');
-    const cropImage = document.getElementById('cropImage');
-    const ctx = cropCanvas.getContext('2d');
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
     
-    // Redraw image
-    ctx.drawImage(cropImage, 0, 0);
-    
-    // Draw semi-transparent overlay
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
-    
-    // Clear crop area
-    if (cropState.cropBox) {
-        ctx.clearRect(cropState.cropBox.x, cropState.cropBox.y, cropState.cropBox.width, cropState.cropBox.height);
-        ctx.drawImage(cropImage, cropState.cropBox.x, cropState.cropBox.y, cropState.cropBox.width, cropState.cropBox.height, 
-                      cropState.cropBox.x, cropState.cropBox.y, cropState.cropBox.width, cropState.cropBox.height);
-        
-        // Draw crop box border
-        ctx.strokeStyle = '#ff6b6b';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(cropState.cropBox.x, cropState.cropBox.y, cropState.cropBox.width, cropState.cropBox.height);
-    }
-}
-
-function handleCropStart(e) {
-    const cropCanvas = document.getElementById('cropCanvas');
-    const rect = cropCanvas.getBoundingClientRect();
-    cropState.startX = e.clientX - rect.left;
-    cropState.startY = e.clientY - rect.top;
-    cropState.isDrawing = true;
-}
-
-function handleCropMove(e) {
-    if (!cropState.isDrawing || !cropState.cropBox) return;
-    
-    const cropCanvas = document.getElementById('cropCanvas');
-    const rect = cropCanvas.getBoundingClientRect();
-    const currentX = e.clientX - rect.left;
-    const currentY = e.clientY - rect.top;
-    
-    // Calculate new crop box
-    const minSize = 50;
-    const width = Math.max(minSize, currentX - cropState.startX);
-    const height = Math.max(minSize, currentY - cropState.startY);
-    
-    cropState.cropBox.x = Math.max(0, cropState.startX);
-    cropState.cropBox.y = Math.max(0, cropState.startY);
-    cropState.cropBox.width = Math.min(width, cropCanvas.width - cropState.cropBox.x);
-    cropState.cropBox.height = Math.min(height, cropCanvas.height - cropState.cropBox.y);
-    
-    drawCropBox();
-}
-
-function handleCropEnd() {
-    cropState.isDrawing = false;
+    // Reset crop state
+    cropState = {
+        startX: 0,
+        startY: 0,
+        startWidth: 0,
+        startHeight: 0,
+        startLeft: 0,
+        startTop: 0,
+        isMoving: false,
+        isResizing: false,
+        resizeHandle: null,
+        cropBox: null,
+        imageData: null,
+        imageWidth: 0,
+        imageHeight: 0,
+        originalAspectRatio: 1
+    };
 }
 
 function applyCrop() {
     if (currentCropIndex === null || !cropState.cropBox) return;
     
-    const cropCanvas = document.getElementById('cropCanvas');
     const cropImage = document.getElementById('cropImage');
+    const cropBox = document.getElementById('cropBox');
     
-    // Create temporary canvas for cropping
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = cropState.cropBox.width;
-    tempCanvas.height = cropState.cropBox.height;
-    const tempCtx = tempCanvas.getContext('2d');
+    // Get the original image file and load it fresh to get accurate dimensions
+    const file = selectedFiles[currentCropIndex];
+    const reader = new FileReader();
     
-    // Get the cropped image data
-    const imageData = cropCanvas.getContext('2d').getImageData(
-        cropState.cropBox.x, 
-        cropState.cropBox.y, 
-        cropState.cropBox.width, 
-        cropState.cropBox.height
-    );
-    tempCtx.putImageData(imageData, 0, 0);
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            // Get actual image dimensions
+            const actualImageWidth = img.width;
+            const actualImageHeight = img.height;
+            
+            // Get displayed image dimensions
+            const displayWidth = cropImage.offsetWidth;
+            const displayHeight = cropImage.offsetHeight;
+            
+            // Calculate scale ratios (displayed size -> actual file size)
+            const scaleX = actualImageWidth / displayWidth;
+            const scaleY = actualImageHeight / displayHeight;
+            
+            // Get crop box position and size
+            const cropBoxRect = cropBox.getBoundingClientRect();
+            const cropImageRect = cropImage.getBoundingClientRect();
+            
+            // Calculate crop box center in actual image coordinates
+            const relativeLeft = cropBoxRect.left - cropImageRect.left;
+            const relativeTop = cropBoxRect.top - cropImageRect.top;
+            const cropBoxWidth = cropBoxRect.width;
+            const cropBoxHeight = cropBoxRect.height;
+            
+            // Calculate center point in actual image coordinates
+            const centerX = (relativeLeft + cropBoxWidth / 2) * scaleX;
+            const centerY = (relativeTop + cropBoxHeight / 2) * scaleY;
+            const boxWidth = cropBoxWidth * scaleX;
+            const boxHeight = cropBoxHeight * scaleY;
+            
+            // Store only the center point and size, not individual corners
+            if (!cropData[currentCropIndex]) {
+                cropData[currentCropIndex] = {};
+            }
+            cropData[currentCropIndex].cropped = true;
+            cropData[currentCropIndex].centerX = centerX;
+            cropData[currentCropIndex].centerY = centerY;
+            cropData[currentCropIndex].boxWidth = boxWidth;
+            cropData[currentCropIndex].boxHeight = boxHeight;
+            
+            console.log('Crop data saved (center-based):', cropData[currentCropIndex]);
+            
+            // Update previews
+            displayMediaPreview();
+            updatePreview();
+            
+            // Close modal
+            closeCropModal();
+            showToast('Image cropped successfully', 'success');
+        };
+        img.src = e.target.result;
+    };
     
-    // Convert to blob and update selectedFiles
-    tempCanvas.toBlob((blob) => {
-        const file = new File([blob], selectedFiles[currentCropIndex].name, { type: 'image/jpeg' });
-        selectedFiles[currentCropIndex] = file;
-        
-        // Update preview
-        displayMediaPreview();
-        updatePreview();
-        
-        // Close modal
-        closeCropModal();
-        showToast('Image cropped successfully', 'success');
-    }, 'image/jpeg');
+    reader.readAsDataURL(file);
 }
 
-// Aspect Ratio Handler
+function saveCropData() {
+    // Save the current crop box to cropData without closing the modal
+    if (currentCropIndex === null || !cropState.cropBox) return;
+    
+    const cropImage = document.getElementById('cropImage');
+    const cropBox = document.getElementById('cropBox');
+    
+    // Get the original image file and load it fresh to get accurate dimensions
+    const file = selectedFiles[currentCropIndex];
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            // Get actual image dimensions
+            const actualImageWidth = img.width;
+            const actualImageHeight = img.height;
+            
+            // Get displayed image dimensions
+            const displayWidth = cropImage.offsetWidth;
+            const displayHeight = cropImage.offsetHeight;
+            
+            // Calculate scale ratios (displayed size -> actual file size)
+            const scaleX = actualImageWidth / displayWidth;
+            const scaleY = actualImageHeight / displayHeight;
+            
+            // Get crop box position and size
+            const cropBoxRect = cropBox.getBoundingClientRect();
+            const cropImageRect = cropImage.getBoundingClientRect();
+            
+            // Calculate crop box center in actual image coordinates
+            const relativeLeft = cropBoxRect.left - cropImageRect.left;
+            const relativeTop = cropBoxRect.top - cropImageRect.top;
+            const cropBoxWidth = cropBoxRect.width;
+            const cropBoxHeight = cropBoxRect.height;
+            
+            // Calculate center point in actual image coordinates
+            const centerX = (relativeLeft + cropBoxWidth / 2) * scaleX;
+            const centerY = (relativeTop + cropBoxHeight / 2) * scaleY;
+            const boxWidth = cropBoxWidth * scaleX;
+            const boxHeight = cropBoxHeight * scaleY;
+            
+            // Store only the center point and size, not individual corners
+            if (!cropData[currentCropIndex]) {
+                cropData[currentCropIndex] = {};
+            }
+            cropData[currentCropIndex].cropped = true;
+            cropData[currentCropIndex].centerX = centerX;
+            cropData[currentCropIndex].centerY = centerY;
+            cropData[currentCropIndex].boxWidth = boxWidth;
+            cropData[currentCropIndex].boxHeight = boxHeight;
+            
+            console.log('Crop data saved (center-based, modal open):', cropData[currentCropIndex]);
+            
+            // Update previews
+            displayMediaPreview();
+            updatePreview();
+            
+            // Modal stays open - user can continue editing
+        };
+        img.src = e.target.result;
+    };
+    
+    reader.readAsDataURL(file);
+}
+
+// ASPECT RATIO FEATURE DISABLED - TODO: Fix aspect ratio switching issues
+// Aspect Ratio Handler - Currently disabled, defaulted to 'original'
+/*
 function handleAspectRatioChange(e) {
     const value = e.target.value;
+    console.log('Aspect ratio changed to:', value);
     const customInput = document.getElementById('customAspectRatio');
     
     if (value === 'custom') {
@@ -2299,6 +3089,175 @@ function handleAspectRatioChange(e) {
     }
     
     selectedAspectRatio = value;
+    
+    // If crop modal is open, update the crop box with new aspect ratio and save the crop
+    const cropModal = document.getElementById('cropModal');
+    const isModalOpen = cropModal && cropModal.style.display === 'flex';
+    console.log('Crop modal status - is open:', isModalOpen, 'currentCropIndex:', currentCropIndex);
+    
+    if (isModalOpen && currentCropIndex !== null) {
+        console.log('Calling updateCropBoxAspectRatio...');
+        updateCropBoxAspectRatio();
+        // Automatically save the updated crop to cropData without closing the modal
+        console.log('Auto-saving crop after aspect ratio change...');
+        setTimeout(() => saveCropData(), 100);
+        return; // Don't call displayMediaPreview/updatePreview here, saveCropData will do it
+    }
+    
     displayMediaPreview();
     updatePreview();
 }
+*/
+
+// ASPECT RATIO FEATURE DISABLED - Commenting out updateCropBoxAspectRatio function
+/*
+function updateCropBoxAspectRatio() {
+    console.log('updateCropBoxAspectRatio called');
+    const cropImage = document.getElementById('cropImage');
+    const cropBox = document.getElementById('cropBox');
+    
+    if (!cropImage.src || currentCropIndex === null) {
+        console.log('Exiting: missing cropImage.src or currentCropIndex');
+        return;
+    }
+    
+    // Get new aspect ratio from dropdown
+    let aspectRatio = document.getElementById('aspectRatio').value;
+    if (aspectRatio === 'custom') {
+        const customRatio = document.getElementById('customAspectRatio').value;
+        aspectRatio = customRatio || '1:1';
+    }
+    
+    // Determine the target aspect ratio (width / height)
+    let targetRatio;
+    if (aspectRatio === 'original') {
+        targetRatio = cropState.originalAspectRatio;
+        cropImage.style.aspectRatio = 'auto';
+    } else {
+        if (aspectRatio.includes(':')) {
+            const [w, h] = aspectRatio.split(':').map(parseFloat);
+            targetRatio = w / h;
+        } else {
+            targetRatio = parseFloat(aspectRatio);
+        }
+        cropImage.style.aspectRatio = targetRatio;
+    }
+    
+    // Wait for layout to update after aspect ratio change
+    requestAnimationFrame(() => {
+        // Get updated image dimensions after aspect ratio change
+        const imageWidth = cropImage.offsetWidth;
+        const imageHeight = cropImage.offsetHeight;
+        const imageLeft = cropImage.offsetLeft;
+        const imageTop = cropImage.offsetTop;
+        const actualImageWidth = cropImage.naturalWidth;
+        const actualImageHeight = cropImage.naturalHeight;
+        
+        console.log('Image dimensions after ratio change:', { imageWidth, imageHeight, actualImageWidth, actualImageHeight });
+        
+        // Calculate scale from actual to displayed coordinates
+        const scaleX = imageWidth / actualImageWidth;
+        const scaleY = imageHeight / actualImageHeight;
+        
+        // Get the crop center and size in actual image file coordinates (source of truth)
+        let centerActualX, centerActualY, boxActualW, boxActualH;
+        
+        if (cropData[currentCropIndex] && cropData[currentCropIndex].cropped) {
+            // Use stored crop data from file (center-based, most reliable)
+            centerActualX = cropData[currentCropIndex].centerX;
+            centerActualY = cropData[currentCropIndex].centerY;
+            boxActualW = cropData[currentCropIndex].boxWidth;
+            boxActualH = cropData[currentCropIndex].boxHeight;
+            console.log('Using stored center-based crop data from file');
+        } else if (cropState.cropBox) {
+            // Convert current displayed crop box back to actual image coordinates
+            const displayCropCenterX = (cropState.cropBox.x - imageLeft) + cropState.cropBox.width / 2;
+            const displayCropCenterY = (cropState.cropBox.y - imageTop) + cropState.cropBox.height / 2;
+            centerActualX = displayCropCenterX / scaleX;
+            centerActualY = displayCropCenterY / scaleY;
+            boxActualW = cropState.cropBox.width / scaleX;
+            boxActualH = cropState.cropBox.height / scaleY;
+            console.log('Converting displayed crop box to actual coordinates');
+        } else {
+            // No crop data, use full image center
+            centerActualX = actualImageWidth / 2;
+            centerActualY = actualImageHeight / 2;
+            boxActualW = actualImageWidth;
+            boxActualH = actualImageHeight;
+            console.log('Using full image as crop area');
+        }
+        
+        // Clamp to actual image bounds
+        centerActualX = Math.max(0, Math.min(centerActualX, actualImageWidth));
+        centerActualY = Math.max(0, Math.min(centerActualY, actualImageHeight));
+        boxActualW = Math.max(0, Math.min(boxActualW, actualImageWidth));
+        boxActualH = Math.max(0, Math.min(boxActualH, actualImageHeight));
+        
+        // Adjust the crop to match the new aspect ratio while preserving as much as possible
+        let newBoxW, newBoxH;
+        
+        const possibleWFromH = boxActualH * targetRatio;
+        const possibleHFromW = boxActualW / targetRatio;
+        
+        // Try to keep as much of the crop area as possible
+        if (possibleWFromH <= actualImageWidth) {
+            // Can use current height with new width
+            newBoxW = possibleWFromH;
+            newBoxH = boxActualH;
+        } else if (possibleHFromW <= actualImageHeight) {
+            // Can use current width with new height
+            newBoxW = boxActualW;
+            newBoxH = possibleHFromW;
+        } else {
+            // Need to scale down - pick the best fit
+            if (boxActualW / actualImageWidth > boxActualH / actualImageHeight) {
+                // Width is more constrained
+                newBoxW = boxActualW;
+                newBoxH = newBoxW / targetRatio;
+            } else {
+                // Height is more constrained
+                newBoxH = boxActualH;
+                newBoxW = newBoxH * targetRatio;
+            }
+        }
+        
+        // Position centered at the same location
+        let newCenterActualX = centerActualX;
+        let newCenterActualY = centerActualY;
+        
+        // Clamp to image bounds to ensure crop stays in bounds
+        const cropLeftBound = newBoxW / 2;
+        const cropRightBound = actualImageWidth - newBoxW / 2;
+        const cropTopBound = newBoxH / 2;
+        const cropBottomBound = actualImageHeight - newBoxH / 2;
+        
+        newCenterActualX = Math.max(cropLeftBound, Math.min(newCenterActualX, cropRightBound));
+        newCenterActualY = Math.max(cropTopBound, Math.min(newCenterActualY, cropBottomBound));
+        
+        // Convert back to displayed coordinates
+        const displayCenterX = imageLeft + newCenterActualX * scaleX;
+        const displayCenterY = imageTop + newCenterActualY * scaleY;
+        const displayBoxW = newBoxW * scaleX;
+        const displayBoxH = newBoxH * scaleY;
+        const displayCropX = displayCenterX - displayBoxW / 2;
+        const displayCropY = displayCenterY - displayBoxH / 2;
+        
+        console.log('New crop (center-based):', { centerActualX, centerActualY, newBoxW, newBoxH }, '-> displayed:', { displayCropX, displayCropY, displayBoxW, displayBoxH });
+        
+        // Update crop state
+        cropState.cropBox = {
+            x: displayCropX,
+            y: displayCropY,
+            width: displayBoxW,
+            height: displayBoxH
+        };
+        
+        // Update crop box DOM element
+        cropBox.style.left = displayCropX + 'px';
+        cropBox.style.top = displayCropY + 'px';
+        cropBox.style.width = displayBoxW + 'px';
+        cropBox.style.height = displayBoxH + 'px';
+        
+        console.log('Crop box updated');
+    });
+}*/

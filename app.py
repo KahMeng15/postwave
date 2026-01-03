@@ -33,7 +33,18 @@ def create_app(config_class=Config):
     
     # Initialize extensions
     db.init_app(app)
-    CORS(app)
+    CORS(app, 
+         origins=[
+            "http://127.0.0.1:5500",
+            "http://127.0.0.1:5000",
+            "http://localhost:5500",
+            "http://localhost:5000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3000"
+        ],
+         supports_credentials=True,
+         allow_headers=['Content-Type', 'Authorization'],
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
     jwt = JWTManager(app)
     
     # Create upload folder if it doesn't exist
@@ -69,6 +80,14 @@ def create_app(config_class=Config):
         hours=6,  # Run every 6 hours
         id='cleanup_cache',
         name='Clean up expired Instagram cache',
+        replace_existing=True
+    )
+    scheduler.add_job(
+        func=refresh_instagram_cache,
+        trigger="interval",
+        minutes=30,  # Run every 30 minutes
+        id='refresh_cache',
+        name='Refresh Instagram cache and posts',
         replace_existing=True
     )
     scheduler.start()
@@ -207,6 +226,44 @@ def cleanup_expired_cache():
             scheduler_app.logger.info(f'Cache cleanup: Removed {deleted_count} expired entries')
         except Exception as e:
             scheduler_app.logger.error(f'Failed to clean up cache: {str(e)}', exc_info=True)
+
+
+def refresh_instagram_cache():
+    """
+    Background task to refresh Instagram cache and post data.
+    Runs every 30 minutes for all active users.
+    """
+    from models import User
+    from instagram_api import InstagramAPI
+    from cache_manager import CacheManager
+    
+    with scheduler_app.app_context():
+        try:
+            ig_api = InstagramAPI()
+            users = User.query.filter(User.instagram_account_id.isnot(None)).all()
+            
+            refreshed_count = 0
+            for user in users:
+                try:
+                    if user.instagram_access_token and user.instagram_account_id:
+                        # Fetch fresh media from Instagram API
+                        media_list = ig_api.get_media_list(
+                            user.instagram_access_token,
+                            user.instagram_account_id,
+                            limit=25
+                        )
+                        
+                        # Cache the fresh posts
+                        CacheManager.cache_posts_batch(user.id, media_list)
+                        refreshed_count += 1
+                        scheduler_app.logger.debug(f'Refreshed cache for user {user.id}')
+                except Exception as e:
+                    scheduler_app.logger.debug(f'Failed to refresh cache for user {user.id}: {str(e)}')
+            
+            scheduler_app.logger.info(f'Instagram cache refresh completed for {refreshed_count} users')
+        except Exception as e:
+            scheduler_app.logger.error(f'Failed to refresh Instagram cache: {str(e)}', exc_info=True)
+
 
 
 if __name__ == '__main__':

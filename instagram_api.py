@@ -49,6 +49,64 @@ class InstagramAPI:
             logger.error(error_msg)
             raise Exception(error_msg)
     
+    def get_instagram_account_id_from_token(self, access_token):
+        """
+        Get Instagram Business Account ID directly from access token.
+        Tries multiple approaches to find the Instagram Business Account.
+        """
+        # Try Approach 1: /me/accounts with instagram_business_account field
+        try:
+            url = f"{self.base_url}/me/accounts"
+            params = {
+                'fields': 'id,name,instagram_business_account',
+                'access_token': access_token
+            }
+            
+            response = requests.get(url, params=params)
+            
+            if response.status_code == 200:
+                data = response.json()
+                pages = data.get('data', [])
+                
+                # Find first page with Instagram Business Account
+                for page in pages:
+                    ig_account = page.get('instagram_business_account', {})
+                    ig_id = ig_account.get('id')
+                    
+                    if ig_id:
+                        logger.info(f'Found Instagram Business Account: {ig_id}')
+                        return ig_id
+        except Exception as e:
+            logger.debug(f'Approach 1 failed: {str(e)}')
+        
+        # Try Approach 2: /me/instagram_accounts (direct access)
+        try:
+            url = f"{self.base_url}/me/instagram_accounts"
+            params = {
+                'access_token': access_token
+            }
+            
+            response = requests.get(url, params=params)
+            
+            if response.status_code == 200:
+                data = response.json()
+                accounts = data.get('data', [])
+                
+                if accounts and len(accounts) > 0:
+                    ig_id = accounts[0].get('id')
+                    logger.info(f'Found Instagram Business Account: {ig_id}')
+                    return ig_id
+        except Exception as e:
+            logger.debug(f'Approach 2 failed: {str(e)}')
+        
+        # If both approaches fail, provide helpful error message
+        error_msg = (
+            'No Instagram Business Account found. '
+            'Please ensure you have a Facebook Page connected to an Instagram Business Account.'
+        )
+        logger.error(error_msg)
+        raise Exception(error_msg)
+    
     def get_instagram_business_account(self, access_token, page_id):
         """
         Get Instagram Business Account ID from Facebook Page.

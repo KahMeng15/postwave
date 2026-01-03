@@ -95,6 +95,52 @@ def connect_instagram():
         return jsonify({'error': error_msg, 'details': str(e)}), 400
 
 
+@instagram_bp.route('/fetch-account-id', methods=['POST'])
+@jwt_required()
+def fetch_account_id():
+    """
+    Fetch Instagram Business Account ID from access token.
+    This allows auto-discovery of the account ID without manual entry.
+    
+    Required: access_token
+    """
+    current_user_id = int(get_jwt_identity())
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    
+    if not data or not data.get('access_token'):
+        logger.error('Missing required field: access_token')
+        return jsonify({'error': 'Missing access_token'}), 400
+    
+    try:
+        logger.info(f'Fetching Instagram Account ID from token for user {current_user_id}')
+        
+        # Convert short-lived token to long-lived token
+        logger.debug('Converting short-lived token to long-lived token...')
+        token_data = ig_api.get_long_lived_token(data['access_token'])
+        logger.info('Successfully obtained long-lived token')
+        
+        # Get Instagram Business Account ID directly from token
+        logger.debug('Fetching Instagram Business Account ID...')
+        ig_account_id = ig_api.get_instagram_account_id_from_token(token_data['access_token'])
+        
+        logger.info(f'Successfully fetched Instagram Account ID: {ig_account_id}')
+        
+        return jsonify({
+            'instagram_account_id': ig_account_id,
+            'message': 'Account ID fetched successfully'
+        }), 200
+    
+    except Exception as e:
+        error_msg = f'Failed to fetch account ID: {str(e)}'
+        logger.error(error_msg, exc_info=True)
+        return jsonify({'error': error_msg, 'details': str(e)}), 400
+
+
 @instagram_bp.route('/disconnect', methods=['POST'])
 @jwt_required()
 def disconnect_instagram():
@@ -327,3 +373,53 @@ def clear_user_cache():
     except Exception as e:
         logger.error(f'Failed to clear cache: {str(e)}')
         return jsonify({'error': 'Failed to clear cache'}), 500
+
+@instagram_bp.route('/fetch-profile-picture', methods=['POST'])
+@jwt_required()
+def fetch_profile_picture():
+    """
+    Fetch and cache the Instagram profile picture for the current user.
+    """
+    current_user_id = int(get_jwt_identity())
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    if not user.instagram_account_id or not user.instagram_access_token:
+        return jsonify({'error': 'Instagram account not connected'}), 400
+    
+    try:
+        logger.info(f'Fetching profile picture for user {current_user_id}')
+        
+        # Get account info which includes profile_picture_url
+        account_info = ig_api.get_account_info(
+            user.instagram_access_token,
+            user.instagram_account_id
+        )
+        
+        profile_picture_url = account_info.get('profile_picture_url')
+        
+        if profile_picture_url:
+            # Cache the profile picture locally
+            cached_path = CacheManager.cache_profile_picture(current_user_id, profile_picture_url)
+            
+            # Save the profile picture URL to user record
+            user.instagram_profile_picture = profile_picture_url
+            db.session.commit()
+            
+            logger.info(f'Profile picture cached successfully for user {current_user_id}')
+            
+            return jsonify({
+                'message': 'Profile picture fetched and cached successfully',
+                'profile_picture_url': profile_picture_url,
+                'cached_path': cached_path
+            }), 200
+        else:
+            logger.warning(f'No profile picture URL in account info for user {current_user_id}')
+            return jsonify({'error': 'No profile picture available'}), 404
+    
+    except Exception as e:
+        error_msg = f'Failed to fetch profile picture: {str(e)}'
+        logger.error(error_msg, exc_info=True)
+        return jsonify({'error': error_msg}), 400

@@ -21,8 +21,16 @@
                 </div>
                 <div class="form-group">
                     <label>Access Token *</label>
-                    <input type="text" id="accessToken" placeholder="EAAMDbXJTTtMBO..." required>
-                    <small class="text-muted">From: <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a> (select your app, generate token)</small>
+                    <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
+                        <div style="flex: 1;">
+                            <input type="text" id="accessToken" placeholder="EAAMDbXJTTtMBO..." required>
+                            <small class="text-muted">From: <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a> (select your app, generate token)</small>
+                        </div>
+                        <button type="button" id="fetchAccountIdBtn" class="btn btn-secondary" style="margin-top: 0.5rem; white-space: nowrap;">
+                            <span id="fetchBtnText">🔍 Fetch</span>
+                            <span id="fetchBtnSpinner" style="display: none;">⏳</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Instagram Business Account ID *</label>
@@ -55,36 +63,6 @@
                 </div>
                 <button type="submit" class="btn btn-primary">Change Password</button>
             </form>
-        </div>
-    </div>
-    
-    <div class="card">
-        <div class="card-header">
-            <h2>⌨️ Keyboard Shortcuts</h2>
-        </div>
-        <div class="card-body">
-            <table style="width: 100%; border-collapse: collapse;">
-                <tr style="border-bottom: 1px solid var(--border-color);">
-                    <td style="padding: 0.75rem; font-weight: 500;">Ctrl/Cmd + N</td>
-                    <td style="padding: 0.75rem;">New Post</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border-color);">
-                    <td style="padding: 0.75rem; font-weight: 500;">Ctrl/Cmd + D</td>
-                    <td style="padding: 0.75rem;">Dashboard</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border-color);">
-                    <td style="padding: 0.75rem; font-weight: 500;">Ctrl/Cmd + P</td>
-                    <td style="padding: 0.75rem;">Posts</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border-color);">
-                    <td style="padding: 0.75rem; font-weight: 500;">Ctrl/Cmd + S</td>
-                    <td style="padding: 0.75rem;">Settings</td>
-                </tr>
-                <tr>
-                    <td style="padding: 0.75rem; font-weight: 500;">ESC</td>
-                    <td style="padding: 0.75rem;">Close Modal</td>
-                </tr>
-            </table>
         </div>
     </div>
 </div>

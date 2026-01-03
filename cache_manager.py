@@ -256,3 +256,43 @@ class CacheManager:
             'expired': expired,
             'expiry_days': CacheManager.CACHE_EXPIRY_DAYS
         }
+    
+    @staticmethod
+    def cache_profile_picture(user_id, profile_picture_url):
+        """
+        Download and cache Instagram profile picture.
+        Returns the downloaded image path or None if failed.
+        """
+        try:
+            if not profile_picture_url:
+                logger.debug(f'No profile picture URL provided for user {user_id}')
+                return None
+            
+            CacheManager.ensure_cache_folder()
+            
+            # Get image extension from URL
+            url_path = profile_picture_url.split('?')[0]
+            ext = url_path.split('.')[-1][:4] if '.' in url_path else 'jpg'
+            if ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                ext = 'jpg'
+            
+            # Create filename for profile picture
+            filename = f"profile_pic_user_{user_id}.{ext}"
+            filepath = os.path.join(CacheManager.CACHE_IMAGE_FOLDER, filename)
+            
+            # Download with timeout
+            response = requests.get(profile_picture_url, timeout=10, stream=True)
+            response.raise_for_status()
+            
+            # Save image
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            logger.info(f"Successfully cached profile picture for user {user_id}: {filepath}")
+            return filepath
+        
+        except Exception as e:
+            logger.error(f"Failed to cache profile picture for user {user_id}: {str(e)}")
+            return None

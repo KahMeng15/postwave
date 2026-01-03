@@ -19,11 +19,12 @@
                             <div id="mediaPreview" class="media-preview"></div>
                         </div>
                         
-                        <div class="form-group">
+                        <!-- ASPECT RATIO FEATURE DISABLED - TODO: Fix aspect ratio switching issues -->
+                        <div class="form-group" style="display: none;">
                             <label>Post Aspect Ratio</label>
                             <div class="aspect-ratio-wrapper">
                                 <select id="aspectRatio" class="aspect-ratio-select">
-                                    <option value="original">Original (no crop)</option>
+                                    <option value="original" selected>Original (no crop)</option>
                                     <option value="1:1">Square (1:1)</option>
                                     <option value="4:5">Portrait (4:5)</option>
                                     <option value="1.91:1">Landscape (1.91:1)</option>
@@ -87,8 +88,15 @@
                 </div>
                 <div class="crop-modal-body">
                     <div class="crop-container">
-                        <img id="cropImage" src="" alt="Crop image">
-                        <canvas id="cropCanvas" class="crop-canvas" style="display: none;"></canvas>
+                        <img id="cropImage" src="" alt="Crop image" class="crop-image">
+                        <div id="cropOverlay" class="crop-overlay">
+                            <div id="cropBox" class="crop-box">
+                                <div class="crop-handle crop-handle-nw"></div>
+                                <div class="crop-handle crop-handle-ne"></div>
+                                <div class="crop-handle crop-handle-sw"></div>
+                                <div class="crop-handle crop-handle-se"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="crop-modal-footer">

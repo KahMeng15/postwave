@@ -630,6 +630,12 @@ textarea {
     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
     gap: 0.5rem;
     margin-top: 1rem;
+    align-items: start;
+    transition: opacity 0.15s ease;
+}
+
+.media-preview.reordering {
+    opacity: 0.6;
 }
 
 /* Drag and Drop Zone */
@@ -712,6 +718,15 @@ textarea {
     height: 32px;
     border-radius: 50%;
     background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+    background-size: cover;
+    background-position: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.75rem;
+    color: white;
+    flex-shrink: 0;
 }
 
 .ig-username {
@@ -1304,18 +1319,19 @@ textarea {
 .media-preview-item {
     position: relative;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     margin: 0.5rem;
-    aspect-ratio: 1;
-    width: 150px;
     border-radius: 0.5rem;
-    overflow: hidden;
+    overflow: visible;
+    transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+    border: 2px solid transparent;
 }
 
 .media-preview-item img {
-    width: 100%;
-    height: 100%;
+    width: 150px;
+    height: 150px;
     border-radius: 0.5rem;
     object-fit: cover;
 }
@@ -1337,6 +1353,24 @@ textarea {
 
 .media-preview-remove:hover {
     background: var(--danger-color-dark);
+}
+
+.crop-badge {
+    position: absolute;
+    top: 0.25rem;
+    left: 0.25rem;
+    background: #4CAF50;
+    color: white;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: bold;
+    z-index: 9;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .media-preview-controls {
@@ -1387,14 +1421,87 @@ textarea {
 .media-preview-remove:hover {
     background-color: rgba(0, 0, 0, 0.9);
 }
-/* Drag and Drop Styling */
-.media-preview-item.drag-over {
-    opacity: 0.5;
-    transform: scale(0.95);
+
+/* Reorder controls */
+.media-reorder-controls {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    background: transparent;
+    padding: 0.5rem 0 0 0;
+    border-radius: 0;
+    backdrop-filter: none;
+    width: 100%;
 }
 
-.media-preview-item.dragging {
-    opacity: 0.3;
+.media-move-btn {
+    background-color: rgba(79, 70, 229, 0.8);
+    color: white;
+    border: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.media-move-btn:hover:not(:disabled) {
+    background-color: var(--primary-color);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+}
+
+.media-move-btn:disabled {
+    background-color: rgba(107, 114, 128, 0.4);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.media-move-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: scaleY(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: scaleY(1);
+    }
+}
+
+@keyframes slideInIndicator {
+    from {
+        opacity: 0;
+        transform: scaleY(0.5);
+    }
+    to {
+        opacity: 1;
+        transform: scaleY(1);
+    }
+}
+
+@keyframes reorder {
+    from {
+        opacity: 0.7;
+        transform: translateX(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.media-preview-item.reordering {
+    animation: reorder 0.3s ease-out;
 }
 
 /* Aspect Ratio Wrapper */
@@ -1436,11 +1543,12 @@ textarea {
 .crop-modal-content {
     background-color: var(--surface);
     border-radius: 0.5rem;
-    max-width: 600px;
-    width: 90%;
-    max-height: 90vh;
-    overflow-y: auto;
+    max-width: 750px;
+    width: 95%;
+    max-height: 85vh;
     box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
 }
 
 .crop-modal-header {
@@ -1449,10 +1557,12 @@ textarea {
     align-items: center;
     padding: 1.5rem;
     border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
 }
 
 .crop-modal-header h3 {
     margin: 0;
+    font-size: 1.25rem;
 }
 
 .crop-modal-close {
@@ -1461,43 +1571,96 @@ textarea {
     font-size: 2rem;
     cursor: pointer;
     color: var(--text-primary);
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.crop-modal-close:hover {
+    background-color: var(--background);
+    border-radius: 0.25rem;
 }
 
 .crop-modal-body {
     padding: 1.5rem;
+    flex: 1;
+    overflow: auto;
 }
 
 .crop-container {
     position: relative;
     width: 100%;
-    max-height: 400px;
-    overflow: auto;
+    height: 450px;
+    background-color: #000;
     border: 1px solid var(--border-color);
     border-radius: 0.5rem;
-    background-color: #000;
-}
-
-.crop-container img,
-.crop-canvas {
-    display: block;
-    width: 100%;
-    height: auto;
-    cursor: crosshair;
-}
-
-.crop-controls {
+    overflow: hidden;
     display: flex;
-    gap: 1rem;
-    margin-top: 1rem;
     align-items: center;
+    justify-content: center;
 }
 
-.crop-controls label {
-    font-weight: 500;
+.crop-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    position: relative;
 }
 
-.crop-controls input {
-    width: 80px;
+.crop-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.crop-box {
+    position: absolute;
+    border: 2px solid #4CAF50;
+    background: rgba(76, 175, 80, 0.1);
+    box-sizing: border-box;
+    cursor: move;
+    box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.4);
+}
+
+.crop-handle {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: white;
+    border: 2px solid #4CAF50;
+    border-radius: 2px;
+    box-sizing: border-box;
+}
+
+.crop-handle-nw {
+    top: -6px;
+    left: -6px;
+    cursor: nwse-resize;
+}
+
+.crop-handle-ne {
+    top: -6px;
+    right: -6px;
+    cursor: nesw-resize;
+}
+
+.crop-handle-sw {
+    bottom: -6px;
+    left: -6px;
+    cursor: nesw-resize;
+}
+
+.crop-handle-se {
+    bottom: -6px;
+    right: -6px;
+    cursor: nwse-resize;
+}
     padding: 0.5rem;
     border: 1px solid var(--border-color);
     border-radius: 0.25rem;
@@ -1509,6 +1672,11 @@ textarea {
     gap: 0.75rem;
     padding: 1.5rem;
     border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.crop-modal-footer .btn {
+    min-width: 100px;
 }
 
 /* Media Preview Container with Aspect Ratio */
