@@ -174,6 +174,10 @@ class Team(db.Model):
     instagram_profile_picture = db.Column(db.Text, nullable=True)
     token_expires_at = db.Column(db.DateTime, nullable=True)
     
+    # Optional: Team-specific Instagram App credentials for token exchange
+    instagram_app_id = db.Column(db.String(255), nullable=True)
+    instagram_app_secret = db.Column(db.Text, nullable=True)
+    
     # Relationships
     members = db.relationship('TeamMember', backref='team', lazy=True, cascade='all, delete-orphan')
     posts = db.relationship('Post', backref='team', lazy=True, cascade='all, delete-orphan')

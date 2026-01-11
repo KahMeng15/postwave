@@ -450,11 +450,16 @@ def connect_team_instagram(team_id):
         if not data or not data.get('access_token'):
             return jsonify({'error': 'Missing access_token'}), 400
         
-        # Import InstagramAPI to get long-lived token
+        # Import InstagramAPI with optional team-specific credentials
         from instagram_api import InstagramAPI
-        ig_api = InstagramAPI()
         
-        # Get long-lived token
+        # Use team-specific app credentials if available
+        app_id = data.get('instagram_app_id') or team.instagram_app_id
+        app_secret = data.get('instagram_app_secret') or team.instagram_app_secret
+        
+        ig_api = InstagramAPI(app_id=app_id, app_secret=app_secret)
+        
+        # Get long-lived token (will use token directly if app credentials not available)
         token_data = ig_api.get_long_lived_token(data['access_token'])
         
         # Get Instagram account info
@@ -465,9 +470,15 @@ def connect_team_instagram(team_id):
             page_id = data['page_id']
             account_info = ig_api.get_page_instagram_account(page_id, token_data['access_token'])
             ig_account_id = account_info.get('instagram_business_account_id')
+        else:
+            # Try to auto-detect from token
+            try:
+                ig_account_id = ig_api.get_instagram_account_id_from_token(token_data['access_token'])
+            except Exception as e:
+                logger.warning(f'Auto-detection failed: {str(e)}')
         
         if not ig_account_id:
-            return jsonify({'error': 'Could not find Instagram account'}), 400
+            return jsonify({'error': 'Could not find Instagram account. Please provide instagram_account_id or ensure your account is connected to a Facebook Page.'}), 400
         
         # Get account info
         account_info = ig_api.get_account_info(ig_account_id, token_data['access_token'])
@@ -477,7 +488,15 @@ def connect_team_instagram(team_id):
         team.instagram_access_token = token_data['access_token']
         team.instagram_username = account_info.get('username')
         team.instagram_profile_picture = account_info.get('profile_picture_url')
-        team.token_expires_at = datetime.utcfromtimestamp(token_data.get('expires_at', datetime.utcnow().timestamp()))
+        
+        # Handle expires_at - it could be a datetime object or a timestamp
+        expires_at = token_data.get('expires_at')
+        if isinstance(expires_at, datetime):
+            team.token_expires_at = expires_at
+        elif isinstance(expires_at, (int, float)):
+            team.token_expires_at = datetime.utcfromtimestamp(expires_at)
+        else:
+            team.token_expires_at = datetime.utcnow() + timedelta(days=60)  # Default 60 days
         
         db.session.commit()
         
@@ -498,8 +517,13 @@ def connect_team_instagram(team_id):
         }), 200
     
     except Exception as e:
-        logger.error(f'Failed to connect Instagram for team: {str(e)}', exc_info=True)
-        return jsonify({'error': f'Failed to connect Instagram: {str(e)}'}), 500
+        error_msg = str(e)
+        logger.error(f'Failed to connect Instagram for team: {error_msg}', exc_info=True)
+        print(f'[ERROR] Instagram connect failed: {error_msg}')  # Also print to console
+        return jsonify({
+            'error': f'Failed to connect Instagram: {error_msg}',
+            'details': error_msg
+        }), 500
 
 
 # ==================== TEAM OWNERSHIP TRANSFER ====================

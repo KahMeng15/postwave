@@ -13,18 +13,30 @@ class InstagramAPI:
     Requirements:
     1. Instagram Business Account
     2. Facebook Page connected to the Instagram account
-    3. Facebook App with Instagram Graph API permissions
+    3. Facebook App with Instagram Graph API permissions (optional)
     """
     
-    def __init__(self):
+    def __init__(self, app_id=None, app_secret=None):
         self.base_url = Config.INSTAGRAM_GRAPH_URL
-        self.app_id = Config.INSTAGRAM_APP_ID
-        self.app_secret = Config.INSTAGRAM_APP_SECRET
+        # Use provided credentials, fall back to config, then empty strings
+        self.app_id = app_id or Config.INSTAGRAM_APP_ID or ''
+        self.app_secret = app_secret or Config.INSTAGRAM_APP_SECRET or ''
     
     def get_long_lived_token(self, short_lived_token):
         """
         Exchange a short-lived access token for a long-lived token (60 days).
+        If app credentials are not configured, return the token as-is.
         """
+        logger.info(f'get_long_lived_token called with token: {short_lived_token[:20]}...')
+        
+        # If app credentials are not configured, use token directly
+        if not self.app_id or not self.app_secret:
+            logger.warning('Instagram app credentials not configured - using token directly')
+            return {
+                'access_token': short_lived_token,
+                'expires_at': datetime.utcnow() + timedelta(days=60)
+            }
+        
         url = f"{self.base_url}/oauth/access_token"
         params = {
             'grant_type': 'fb_exchange_token',
@@ -54,6 +66,8 @@ class InstagramAPI:
         Get Instagram Business Account ID directly from access token.
         Tries multiple approaches to find the Instagram Business Account.
         """
+        logger.info('Attempting to auto-detect Instagram Business Account ID from token')
+        
         # Try Approach 1: /me/accounts with instagram_business_account field
         try:
             url = f"{self.base_url}/me/accounts"
@@ -62,11 +76,14 @@ class InstagramAPI:
                 'access_token': access_token
             }
             
+            logger.debug(f'Approach 1: GET {url}')
             response = requests.get(url, params=params)
+            logger.debug(f'Approach 1 response: {response.status_code}')
             
             if response.status_code == 200:
                 data = response.json()
                 pages = data.get('data', [])
+                logger.info(f'Approach 1: Found {len(pages)} pages')
                 
                 # Find first page with Instagram Business Account
                 for page in pages:
@@ -74,10 +91,13 @@ class InstagramAPI:
                     ig_id = ig_account.get('id')
                     
                     if ig_id:
-                        logger.info(f'Found Instagram Business Account: {ig_id}')
+                        logger.info(f'Approach 1 SUCCESS: Found Instagram Business Account: {ig_id}')
                         return ig_id
+                logger.debug('Approach 1: No Instagram Business Account found in pages')
+            else:
+                logger.warning(f'Approach 1 failed: {response.status_code} - {response.text}')
         except Exception as e:
-            logger.debug(f'Approach 1 failed: {str(e)}')
+            logger.debug(f'Approach 1 exception: {str(e)}')
         
         # Try Approach 2: /me/instagram_accounts (direct access)
         try:
@@ -86,23 +106,30 @@ class InstagramAPI:
                 'access_token': access_token
             }
             
+            logger.debug(f'Approach 2: GET {url}')
             response = requests.get(url, params=params)
+            logger.debug(f'Approach 2 response: {response.status_code}')
             
             if response.status_code == 200:
                 data = response.json()
                 accounts = data.get('data', [])
+                logger.info(f'Approach 2: Found {len(accounts)} Instagram accounts')
                 
                 if accounts and len(accounts) > 0:
                     ig_id = accounts[0].get('id')
-                    logger.info(f'Found Instagram Business Account: {ig_id}')
+                    logger.info(f'Approach 2 SUCCESS: Found Instagram Business Account: {ig_id}')
                     return ig_id
+            else:
+                logger.warning(f'Approach 2 failed: {response.status_code} - {response.text}')
         except Exception as e:
-            logger.debug(f'Approach 2 failed: {str(e)}')
+            logger.debug(f'Approach 2 exception: {str(e)}')
         
         # If both approaches fail, provide helpful error message
         error_msg = (
             'No Instagram Business Account found. '
-            'Please ensure you have a Facebook Page connected to an Instagram Business Account.'
+            'Ensure: 1) Token has instagram_basic and pages_read_engagement permissions, '
+            '2) Your Instagram account is a Business account, '
+            '3) Your Instagram account is connected to a Facebook Page'
         )
         logger.error(error_msg)
         raise Exception(error_msg)
@@ -132,8 +159,32 @@ class InstagramAPI:
             error_msg = f"Failed to get Instagram account: {response.status_code} - {response.text}"
             logger.error(error_msg)
             raise Exception(error_msg)
+    def validate_token(self, access_token):
+        """
+        Validate the access token and return token info.
+        Helps diagnose token issues.
+        """
+        url = f"{self.base_url}/debug_token"
+        params = {
+            'input_token': access_token,
+            'access_token': access_token
+        }
+        
+        try:
+            response = requests.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                token_info = data.get('data', {})
+                logger.info(f"Token validation: Type={token_info.get('type')}, Scopes={token_info.get('scopes')}, Expires={token_info.get('expires_at')}")
+                return token_info
+            else:
+                logger.warning(f"Token validation failed: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.warning(f"Token validation error: {str(e)}")
+            return None
     
-    def get_account_info(self, access_token, ig_account_id):
+    def get_account_info(self, ig_account_id, access_token):
         """
         Get Instagram Business Account information.
         """
@@ -152,7 +203,13 @@ class InstagramAPI:
         else:
             error_msg = f"Failed to get account info: {response.status_code} - {response.text}"
             logger.error(error_msg)
+            # Try to validate token to give better error message
+            token_info = self.validate_token(access_token)
+            if token_info:
+                token_type = token_info.get('type', 'Unknown')
+                raise Exception(f"{error_msg}\n\nToken Type: {token_type} (Need Page or App token with instagram_business_account permission)\nMake sure your Instagram Business Account is connected to a Facebook Page.")
             raise Exception(error_msg)
+    
     
     def get_media_list(self, access_token, ig_account_id, limit=25):
         """

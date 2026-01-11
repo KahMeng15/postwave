@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, User, InstagramCache
+from models import db, User, Team, InstagramCache
 from instagram_api import InstagramAPI
 from cache_manager import CacheManager
 from datetime import datetime
@@ -227,7 +227,16 @@ def get_instagram_posts():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
-    if not user.instagram_account_id or not user.instagram_access_token:
+    # Get user's first team membership
+    team_member = user.team_memberships[0] if user.team_memberships else None
+    if not team_member:
+        return jsonify({'error': 'No team membership found'}), 400
+    
+    team = team_member.team
+    if not team:
+        return jsonify({'error': 'Team not found'}), 404
+    
+    if not team.instagram_account_id or not team.instagram_access_token:
         return jsonify({'error': 'Instagram not connected'}), 400
     
     try:
@@ -241,9 +250,9 @@ def get_instagram_posts():
         
         # Fetch with caching
         posts, from_cache = ig_api.get_media_list_with_cache(
-            user.instagram_access_token,
-            user.instagram_account_id,
-            current_user_id,
+            team.instagram_access_token,
+            team.instagram_account_id,
+            team.id,
             limit=limit,
             use_cache=use_cache
         )

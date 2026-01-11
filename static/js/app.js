@@ -2821,43 +2821,39 @@ async function checkInstagramStatus() {
             return;
         }
         
-        // Try to load from cache first
-        const cachedStatus = localStorage.getItem('dashboard_ig_status');
-        if (cachedStatus) {
-            try {
-                const cached = JSON.parse(cachedStatus);
-                if (cached.connected) {
-                    igNotConnected.style.display = 'none';
-                    igConnected.style.display = 'block';
-                    if (igUsername) igUsername.textContent = cached.instagram_username;
-                    if (igExpiry) igExpiry.textContent = new Date(cached.token_expires_at).toLocaleDateString();
-                } else {
-                    igNotConnected.style.display = 'block';
-                    igConnected.style.display = 'none';
-                }
-            } catch (e) {
-                console.warn('Failed to parse cached status:', e);
-            }
+        // Get current team ID from currentUser
+        if (!currentUser || !currentUser.current_team_id) {
+            console.warn('No current team');
+            igNotConnected.style.display = 'block';
+            igConnected.style.display = 'none';
+            return;
         }
         
-        // Update from server in background
-        const response = await apiCall('/instagram/status');
+        // Check TEAM's Instagram status (not user's global status)
+        const response = await apiCall(`/team-settings/${currentUser.current_team_id}/instagram`);
         const data = await response.json();
         
         // Cache the result
         localStorage.setItem('dashboard_ig_status', JSON.stringify(data));
         
-        if (data.connected) {
+        if (data.instagram_connected) {
             igNotConnected.style.display = 'none';
             igConnected.style.display = 'block';
             if (igUsername) igUsername.textContent = data.instagram_username;
-            if (igExpiry) igExpiry.textContent = new Date(data.token_expires_at).toLocaleDateString();
+            if (igExpiry && data.token_expires_at) igExpiry.textContent = new Date(data.token_expires_at).toLocaleDateString();
         } else {
             igNotConnected.style.display = 'block';
             igConnected.style.display = 'none';
         }
     } catch (error) {
         console.error('Failed to check Instagram status:', error);
+        // Show not connected on error
+        const igNotConnected = document.getElementById('igNotConnected');
+        const igConnected = document.getElementById('igConnected');
+        if (igNotConnected && igConnected) {
+            igNotConnected.style.display = 'block';
+            igConnected.style.display = 'none';
+        }
     }
 }
 

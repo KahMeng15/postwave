@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, send_from_directory
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.utils import secure_filename
-from models import db, User, Post, Media
+from models import db, User, Post, Media, Team
 from datetime import datetime
 import os
 from config import Config
@@ -240,7 +240,16 @@ def publish_post_now(post_id):
     
     user = User.query.get(current_user_id)
     
-    if not user.instagram_access_token or not user.instagram_account_id:
+    # Get user's first team membership
+    team_member = user.team_memberships[0] if user.team_memberships else None
+    if not team_member:
+        return jsonify({'error': 'No team membership found'}), 400
+    
+    team = team_member.team
+    if not team:
+        return jsonify({'error': 'Team not found'}), 404
+    
+    if not team.instagram_access_token or not team.instagram_account_id:
         return jsonify({'error': 'Instagram not connected'}), 400
     
     from instagram_api import InstagramAPI
@@ -254,8 +263,8 @@ def publish_post_now(post_id):
         ]
         
         instagram_post_id = ig_api.publish_post(
-            user.instagram_access_token,
-            user.instagram_account_id,
+            team.instagram_access_token,
+            team.instagram_account_id,
             media_urls,
             post.caption
         )
