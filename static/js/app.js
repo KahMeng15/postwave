@@ -3,7 +3,7 @@ const API_BASE = '/api';
 
 // State
 let currentUser = null;
-let userProfileData = null; // Cache for profile picture and username
+let userProfileData = null; // Cache for profile picture and Instagram username
 let selectedFiles = [];
 let currentTheme = localStorage.getItem('theme') || 'light';
 let navbarListenersSetup = false; // Track if navbar listeners are already set up
@@ -14,6 +14,8 @@ let selectedAspectRatio = 'original'; // ASPECT RATIO FEATURE DISABLED - Default
 let draggedItemIndex = null; // Track dragged item during reordering
 let currentCropIndex = null; // Track which image is being cropped
 let cropData = {}; // Store crop data for images
+let invitationToken = null; // Store invitation token from URL query parameter
+let invitationDetailsLoaded = false; // Track if invitation details have been loaded
 
 // Global encryption key for client-side cache
 let encryptionKey = null;
@@ -52,16 +54,83 @@ function initializeRouting() {
 
 // Handle routing based on URL path
 function handleRoute(path, pushState = false) {
-    // Remove leading slash and query params
-    const cleanPath = path.replace(/^\//, '').split('?')[0] || 'login';
+    // Remove leading slash
+    const fullPath = path.replace(/^\//, '');
+    // Get path without query params
+    const cleanPath = fullPath.split('?')[0] || '';
+    
+    // Extract and store invitation token if present in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    if (urlToken) {
+        invitationToken = urlToken;
+        console.log('Invitation token extracted from URL:', invitationToken);
+    }
     
     const token = localStorage.getItem('access_token');
     
-    // Define route mappings
-    const authRoutes = ['login', 'register'];
-    const dashboardRoutes = ['dashboard', 'posts', 'newPost', 'settings'];
+    console.log('handleRoute called with path:', path, 'cleanPath:', cleanPath, 'hasToken:', !!token, 'hasInvitationToken:', !!invitationToken);
     
-    if (authRoutes.includes(cleanPath)) {
+    // Check if this is an accept-invite link
+    if (cleanPath.startsWith('accept-invite') && invitationToken) {
+        console.log('Processing accept-invite with token');
+        // Invitation link - show registration page regardless of auth status
+        if (token) {
+            // Already logged in, redirect to dashboard
+            navigateTo('/dashboard');
+        } else {
+            loadPageContent('auth', false, true); // Skip auto-setup to prevent double call
+            setTimeout(() => {
+                console.log('Calling setupAuthListeners for invitation');
+                setupAuthListeners();
+            }, 200); // Increased timeout to ensure DOM is ready
+        }
+        return;
+    }
+    
+    // Define route mappings
+    const authRoutes = ['login', 'setup'];
+    const dashboardRoutes = ['dashboard', 'posts', 'newPost', 'settings', 'teams'];
+    
+    // Handle root path - check if setup is needed
+    if (cleanPath === '') {
+        console.log('Root path detected, checking setup status');
+        checkSetupStatus().then(needsSetup => {
+            console.log('Setup status check result:', needsSetup);
+            if (needsSetup) {
+                // Setup needed - redirect to setup wizard
+                console.log('Navigating to setup page');
+                navigateTo('/setup');
+            } else if (token) {
+                // Setup complete and user logged in - go to dashboard
+                console.log('Navigating to dashboard');
+                navigateTo('/dashboard');
+            } else {
+                // Setup complete but not logged in - go to login
+                console.log('Navigating to login page');
+                navigateTo('/login');
+            }
+        });
+        return;
+    }
+    
+    if (cleanPath === 'setup') {
+        // Setup route - only for initial setup
+        checkSetupStatus().then(needsSetup => {
+            if (needsSetup) {
+                loadPageContent('onboarding', false);
+                setTimeout(() => {
+                    if (onboardingModule) {
+                        onboardingModule.init();
+                    }
+                }, 100);
+            } else {
+                // Setup already complete, redirect to login
+
+                navigateTo('/login');
+            }
+        });
+    } else if (authRoutes.includes(cleanPath)) {
         // Auth routes - accessible without login
         if (token) {
             // Already logged in, redirect to dashboard
@@ -125,8 +194,44 @@ function checkAuth() {
     }
 }
 
+async function checkSetupStatus() {
+    /**
+     * Check if setup is needed (no super admin exists)
+     * Returns true if setup needed, false otherwise
+     */
+    try {
+        const response = await apiCall('/teams/setup-status', {
+            method: 'GET',
+            skipAuth: true
+        });
+        
+        console.log('Setup status response:', response.status);
+        
+        // If endpoint returns 200, setup is needed
+        if (response.status === 200) {
+            console.log('Setup is needed');
+            return true;  // Setup needed
+        }
+        
+        // If endpoint returns 400, setup is complete
+        if (response.status === 400) {
+            console.log('Setup is complete');
+            return false;  // Setup complete
+        }
+        
+        // Default: assume setup is done if we get unexpected status
+        console.log('Unexpected setup status response:', response.status);
+        return false;
+    } catch (error) {
+        console.error('Error checking setup status:', error);
+        // If we can't reach the endpoint, assume setup is NOT done (try setup)
+        console.log('Setup status check failed, assuming setup needed');
+        return true;  // Assume setup is needed on error
+    }
+}
+
 // Load page content dynamically from separate HTML files
-async function loadPageContent(page, updateUrl = true) {
+async function loadPageContent(page, updateUrl = true, skipSetup = false) {
     const mainContent = document.getElementById('mainContent');
     const navbar = document.getElementById('navbar');
     
@@ -147,8 +252,8 @@ async function loadPageContent(page, updateUrl = true) {
             }
         } else {
             navbar.style.display = 'none';
-            // Setup auth listeners only for auth page
-            if (page === 'auth') {
+            // Setup auth listeners only for auth page (unless skipSetup is true)
+            if (page === 'auth' && !skipSetup) {
                 setupAuthListeners();
             }
         }
@@ -183,6 +288,10 @@ function setupNavbarListeners() {
             e.stopPropagation();
             if (userDropdown) {
                 userDropdown.style.display = userDropdown.style.display === 'none' ? 'block' : 'none';
+                // Load teams when dropdown is opened
+                if (userDropdown.style.display === 'block') {
+                    populateTeamSelector();
+                }
             }
         });
     }
@@ -226,6 +335,95 @@ function setupNavbarListeners() {
     if (navNewPost) {
         navNewPost.addEventListener('click', () => navigateTo('/newPost'));
     }
+    
+    // Teams button
+    const navTeams = document.getElementById('navTeams');
+    if (navTeams) {
+        navTeams.addEventListener('click', () => navigateTo('/teams'));
+    }
+}
+
+// Populate team selector in dropdown
+async function populateTeamSelector() {
+    try {
+        const response = await apiCall('/teams/teams');
+        const data = await response.json();
+        
+        if (!response.ok) {
+            console.error('Failed to fetch teams:', data);
+            return;
+        }
+        
+        const teamSelectContainer = document.getElementById('teamSelectContainer');
+        if (!teamSelectContainer) return;
+        
+        const teams = data.teams || [];
+        
+        // Clear existing team options
+        teamSelectContainer.innerHTML = '';
+        
+        if (teams.length === 0) {
+            const noTeams = document.createElement('div');
+            noTeams.style.padding = '0.75rem 1rem';
+            noTeams.style.color = 'var(--text-secondary)';
+            noTeams.style.fontSize = '0.9rem';
+            noTeams.textContent = 'No teams found';
+            teamSelectContainer.appendChild(noTeams);
+            return;
+        }
+        
+        // Get current team from currentUser if available
+        const currentTeamId = currentUser?.current_team_id;
+        
+        teams.forEach(team => {
+            const teamOption = document.createElement('button');
+            teamOption.className = 'team-option';
+            if (team.id === currentTeamId) {
+                teamOption.classList.add('active');
+            }
+            teamOption.innerHTML = `
+                <div class="team-option-name">${escapeHtml(team.name)}</div>
+                <div class="team-option-member">${team.instagram_username || 'No Instagram connected'}</div>
+            `;
+            teamOption.addEventListener('click', async () => {
+                await switchTeam(team.id);
+                // Close dropdown after selecting
+                const userDropdown = document.getElementById('userDropdown');
+                if (userDropdown) userDropdown.style.display = 'none';
+            });
+            teamSelectContainer.appendChild(teamOption);
+        });
+    } catch (error) {
+        console.error('Error populating team selector:', error);
+    }
+}
+
+// Switch to a different team
+async function switchTeam(teamId) {
+    try {
+        // Update current team in user data
+        if (currentUser) {
+            currentUser.current_team_id = teamId;
+        }
+        
+        // Find the team and update navbar display
+        const response = await apiCall(`/teams/teams`);
+        const data = await response.json();
+        const teams = data.teams || [];
+        const selectedTeam = teams.find(t => t.id === teamId);
+        
+        if (selectedTeam) {
+            const navTeamName = document.getElementById('navTeamName');
+            if (navTeamName) {
+                navTeamName.textContent = selectedTeam.name;
+            }
+        }
+        
+        // Refresh current page or reload
+        navigateTo(window.location.pathname);
+    } catch (error) {
+        console.error('Error switching team:', error);
+    }
 }
 
 // Helper function to close dropdown when clicking outside
@@ -237,6 +435,13 @@ function closeDropdownOutside(e) {
     }
 }
 
+// HTML escape function for safe text insertion
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Setup event listeners
 // Setup listeners for auth pages (login/register)
 function setupAuthListeners() {
@@ -245,8 +450,20 @@ function setupAuthListeners() {
     const showRegisterBtn = document.getElementById('showRegister');
     const showLoginBtn = document.getElementById('showLogin');
     
+    // New invitation flow listeners
+    const acceptInvitationBtn = document.getElementById('acceptInvitationBtn');
+    const declineInvitationBtn = document.getElementById('declineInvitationBtn');
+    const createAccountForm = document.getElementById('createAccountForm');
+    const invitationLoginForm = document.getElementById('invitationLoginForm');
+    const proceedToDashboardBtn = document.getElementById('proceedToDashboardBtn');
+    
     if (loginForm) loginForm.addEventListener('submit', handleLogin);
     if (registerForm) registerForm.addEventListener('submit', handleRegister);
+    if (acceptInvitationBtn) acceptInvitationBtn.addEventListener('click', handleAcceptInvitation);
+    if (declineInvitationBtn) declineInvitationBtn.addEventListener('click', handleDeclineInvitation);
+    if (createAccountForm) createAccountForm.addEventListener('submit', handleCreateAccountStep2a);
+    if (invitationLoginForm) invitationLoginForm.addEventListener('submit', handleLoginStep2b);
+    if (proceedToDashboardBtn) proceedToDashboardBtn.addEventListener('click', handleProceedToTeamDashboard);
     if (showRegisterBtn) showRegisterBtn.addEventListener('click', (e) => {
         e.preventDefault();
         navigateTo('/register');
@@ -255,125 +472,146 @@ function setupAuthListeners() {
         e.preventDefault();
         navigateTo('/login');
     });
+    
+    // Check if we have an invitation token
+    const token = invitationToken || new URLSearchParams(window.location.search).get('token');
+    console.log('setupAuthListeners - checking token. Global invitationToken:', invitationToken, 'URL token:', new URLSearchParams(window.location.search).get('token'), 'final token:', token);
+    
+    if (token) {
+        // Hide login, show invitation form
+        const loginPage = document.getElementById('loginPage');
+        const invitationPage = document.getElementById('invitationPage');
+        console.log('Token found, showing invitation page. loginPage:', !!loginPage, 'invitationPage:', !!invitationPage);
+        if (loginPage) loginPage.style.display = 'none';
+        if (invitationPage) {
+            invitationPage.style.display = 'flex';
+            // Only load invitation details once and only if page elements exist
+            if (!invitationDetailsLoaded) {
+                invitationDetailsLoaded = true;
+                loadInvitationDetails(token);
+            }
+        } else {
+            console.error('Invitation page element not found in DOM');
+        }
+    } else {
+        console.log('No token found, showing login page');
+        const loginPage = document.getElementById('loginPage');
+        const invitationPage = document.getElementById('invitationPage');
+        if (loginPage) loginPage.style.display = 'flex';
+        if (invitationPage) invitationPage.style.display = 'none';
+    }
 }
 
 // Setup listeners for view-specific elements
 function setupViewListeners() {
-    // Posts view
-    const newPostForm = document.getElementById('newPostForm');
-    const saveDraftBtn = document.getElementById('saveDraft');
-    
-    if (newPostForm) newPostForm.addEventListener('submit', handleCreatePost);
-    if (saveDraftBtn) saveDraftBtn.addEventListener('click', () => handleCreatePost(null, 'draft'));
-    
-    // Update profile picture preview when view is shown
-    updateProfilePicturePreview();
-    
-    // Drag and drop
-    if (document.getElementById('dropZone')) setupDragAndDrop();
-    
-    // Media selection
-    const mediaFiles = document.getElementById('mediaFiles');
-    const postCaption = document.getElementById('postCaption');
-    const timePeriod = document.getElementById('timePeriod');
-    const scheduledTime = document.getElementById('scheduledTime');
-    const prevWeekBtn = document.getElementById('prevWeek');
-    const nextWeekBtn = document.getElementById('nextWeek');
-    const aspectRatioSelect = document.getElementById('aspectRatio');
-    const customAspectInput = document.getElementById('customAspectRatio');
-    const carouselPrev = document.getElementById('carouselPrev');
-    const carouselNext = document.getElementById('carouselNext');
-    
-    if (mediaFiles) mediaFiles.addEventListener('change', handleMediaSelect);
-    if (postCaption) postCaption.addEventListener('input', updatePreview);
-    if (timePeriod) {
-        timePeriod.addEventListener('change', handleTimePeriodChange);
-        // Only initialize calendar once per view
-        if (!calendarInitialized) {
-            calendarInitialized = true;
-            calendarWeekOffset = 0; // Reset to current week
-            initializeWeekCalendar();
+    try {
+        // Posts view
+        const newPostForm = document.getElementById('newPostForm');
+        const saveDraftBtn = document.getElementById('saveDraft');
+        
+        if (newPostForm) newPostForm.addEventListener('submit', handleCreatePost);
+        if (saveDraftBtn) saveDraftBtn.addEventListener('click', () => handleCreatePost(null, 'draft'));
+        
+        // Update profile picture preview when view is shown
+        updateProfilePicturePreview();
+        
+        // Drag and drop
+        if (document.getElementById('dropZone')) setupDragAndDrop();
+        
+        // Media selection
+        const mediaFiles = document.getElementById('mediaFiles');
+        const postCaption = document.getElementById('postCaption');
+        const timePeriod = document.getElementById('timePeriod');
+        const scheduledTime = document.getElementById('scheduledTime');
+        const prevWeekBtn = document.getElementById('prevWeek');
+        const nextWeekBtn = document.getElementById('nextWeek');
+        const aspectRatioSelect = document.getElementById('aspectRatio');
+        const customAspectInput = document.getElementById('customAspectRatio');
+        const carouselPrev = document.getElementById('carouselPrev');
+        const carouselNext = document.getElementById('carouselNext');
+        
+        if (mediaFiles) mediaFiles.addEventListener('change', handleMediaSelect);
+        if (postCaption) postCaption.addEventListener('input', updatePreview);
+        if (timePeriod) {
+            timePeriod.addEventListener('change', handleTimePeriodChange);
+            // Only initialize calendar once per view
+            if (!calendarInitialized) {
+                calendarInitialized = true;
+                calendarWeekOffset = 0; // Reset to current week
+                initializeWeekCalendar();
+            }
         }
-    }
-    if (scheduledTime) scheduledTime.addEventListener('change', handleManualDateTimeChange);
-    if (prevWeekBtn) prevWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(-1); });
-    if (nextWeekBtn) nextWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(1); });
-    // ASPECT RATIO FEATURE DISABLED - TODO: Fix aspect ratio switching issues
-    // if (aspectRatioSelect) aspectRatioSelect.addEventListener('change', handleAspectRatioChange);
-    // if (customAspectInput) customAspectInput.addEventListener('change', () => { displayMediaPreview(); updatePreview(); });
-    if (carouselPrev) carouselPrev.addEventListener('click', (e) => { e.preventDefault(); navigateCarousel(-1); });
-    if (carouselNext) carouselNext.addEventListener('click', (e) => { e.preventDefault(); navigateCarousel(1); });
-    
-    // Dashboard / Instagram settings
-    const connectInstagramBtn = document.getElementById('connectInstagram');
-    const disconnectInstagramBtn = document.getElementById('disconnectInstagram');
-    const instagramConfigForm = document.getElementById('instagramConfigForm');
-    const fetchAccountIdBtn = document.getElementById('fetchAccountIdBtn');
-    
-    if (connectInstagramBtn) connectInstagramBtn.addEventListener('click', () => navigateTo('/settings'));
-    if (disconnectInstagramBtn) disconnectInstagramBtn.addEventListener('click', disconnectInstagram);
-    if (instagramConfigForm) instagramConfigForm.addEventListener('submit', connectInstagram);
-    if (fetchAccountIdBtn) fetchAccountIdBtn.addEventListener('click', fetchInstagramAccountId);
-    
-    // Settings
-    const changePasswordForm = document.getElementById('changePasswordForm');
-    if (changePasswordForm) changePasswordForm.addEventListener('submit', changePassword);
-    
-    // Posts view - refresh button
-    const refreshAllPosts = document.getElementById('refreshAllPosts');
-    const statusFilter = document.getElementById('statusFilter');
-    if (refreshAllPosts) {
-        refreshAllPosts.addEventListener('click', () => {
-            loadAllPosts();
-        });
-    }
-    if (statusFilter) {
-        statusFilter.addEventListener('change', () => {
-            loadAllPosts();
-        });
-    }
-    
-    // Dashboard refresh button
-    const refreshDashboardBtn = document.getElementById('refreshDashboard');
-    if (refreshDashboardBtn) {
-        refreshDashboardBtn.addEventListener('click', refreshDashboardData);
-    }
-    
-    // Instagram refresh button (if exists on Instagram-specific view)
-    const refreshInstagramPostsBtn = document.getElementById('refreshInstagramPosts');
-    if (refreshInstagramPostsBtn) {
-        refreshInstagramPostsBtn.addEventListener('click', refreshInstagramPosts);
-    }
-    
-    // Modal
-    const modalClose = document.querySelector('.modal-close');
-    if (modalClose) modalClose.addEventListener('click', closeModal);
-    
-    window.addEventListener('click', (e) => {
-        if (e.target.classList.contains('modal')) {
-            closeModal();
+        if (scheduledTime) scheduledTime.addEventListener('change', handleManualDateTimeChange);
+        if (prevWeekBtn) prevWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(-1); });
+        if (nextWeekBtn) nextWeekBtn.addEventListener('click', (e) => { e.preventDefault(); navigateWeek(1); });
+        // ASPECT RATIO FEATURE DISABLED - TODO: Fix aspect ratio switching issues
+        // if (aspectRatioSelect) aspectRatioSelect.addEventListener('change', handleAspectRatioChange);
+        // if (customAspectInput) customAspectInput.addEventListener('change', () => { displayMediaPreview(); updatePreview(); });
+        if (carouselPrev) carouselPrev.addEventListener('click', (e) => { e.preventDefault(); navigateCarousel(-1); });
+        if (carouselNext) carouselNext.addEventListener('click', (e) => { e.preventDefault(); navigateCarousel(1); });
+        
+        // Dashboard / Instagram settings
+        const connectInstagramBtn = document.getElementById('connectInstagram');
+        const disconnectInstagramBtn = document.getElementById('disconnectInstagram');
+        const instagramConfigForm = document.getElementById('instagramConfigForm');
+        const fetchAccountIdBtn = document.getElementById('fetchAccountIdBtn');
+        
+        if (connectInstagramBtn) connectInstagramBtn.addEventListener('click', () => navigateTo('/settings'));
+        if (disconnectInstagramBtn) disconnectInstagramBtn.addEventListener('click', disconnectInstagram);
+        if (instagramConfigForm) instagramConfigForm.addEventListener('submit', connectInstagram);
+        if (fetchAccountIdBtn) fetchAccountIdBtn.addEventListener('click', fetchInstagramAccountId);
+        
+        // Settings
+        const changePasswordForm = document.getElementById('changePasswordForm');
+        if (changePasswordForm) changePasswordForm.addEventListener('submit', changePassword);
+        
+        // Posts view - refresh button
+        const refreshAllPosts = document.getElementById('refreshAllPosts');
+        const statusFilter = document.getElementById('statusFilter');
+        if (refreshAllPosts) {
+            refreshAllPosts.addEventListener('click', () => {
+                loadAllPosts();
+            });
         }
-    });
+        if (statusFilter) {
+            statusFilter.addEventListener('change', () => {
+                loadAllPosts();
+            });
+        }
+        
+        // Dashboard refresh button
+        const refreshDashboardBtn = document.getElementById('refreshDashboard');
+        if (refreshDashboardBtn) {
+            refreshDashboardBtn.addEventListener('click', refreshDashboardData);
+        }
+        
+        // Instagram refresh button (if exists on Instagram-specific view)
+        const refreshInstagramPostsBtn = document.getElementById('refreshInstagramPosts');
+        if (refreshInstagramPostsBtn) {
+            refreshInstagramPostsBtn.addEventListener('click', refreshInstagramPosts);
+        }
+        
+        // Modal
+        const modalClose = document.querySelector('.modal-close');
+        if (modalClose) modalClose.addEventListener('click', closeModal);
+        
+        window.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal')) {
+                closeModal();
+            }
+        });
+    } catch (error) {
+        console.error('Error in setupViewListeners:', error);
+        // Don't throw - allow view to continue loading even if some listeners fail
+    }
 }
 
 // Old function - kept for compatibility but should be refactored away
 function setupEventListeners() {
     // Auth
     const loginForm = document.getElementById('loginForm');
-    const registerForm = document.getElementById('registerForm');
-    const showRegisterBtn = document.getElementById('showRegister');
-    const showLoginBtn = document.getElementById('showLogin');
     
     if (loginForm) loginForm.addEventListener('submit', handleLogin);
-    if (registerForm) registerForm.addEventListener('submit', handleRegister);
-    if (showRegisterBtn) showRegisterBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        navigateTo('/register');
-    });
-    if (showLoginBtn) showLoginBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        navigateTo('/login');
-    });
     
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
@@ -609,6 +847,39 @@ function showPage(page) {
     }
 }
 
+// Settings view initialization
+async function settingsViewInit() {
+    try {
+        // Initialize settings UI
+        const settingsView = document.getElementById('settings-view');
+        if (!settingsView) {
+            console.error('Settings view not found');
+            return;
+        }
+        
+        // Setup tab switching
+        document.querySelectorAll('.settings-tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const tabName = e.target.dataset.tab;
+                if (tabName) {
+                    // Find the function and call it
+                    const fn = window[`switchSettingsTab`];
+                    if (fn) fn(tabName);
+                }
+            });
+        });
+        
+        // Initialize settings after a small delay to ensure currentUser is loaded
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Initialize each tab
+        await initializeSettings();
+    } catch (error) {
+        console.error('Error initializing settings view:', error);
+        // Don't throw - allow page to load
+    }
+}
+
 // Show view (dashboard views) - now loads separate HTML files for each view
 async function showView(view, updateUrl = true) {
     // Update nav buttons
@@ -624,7 +895,8 @@ async function showView(view, updateUrl = true) {
         'dashboard': { file: 'dashboard', nav: 'navDashboard', init: loadDashboard, url: '/dashboard' },
         'posts': { file: 'posts', nav: 'navPosts', init: loadAllPosts, url: '/posts' },
         'newPost': { file: 'create-post', nav: 'navNewPost', init: initializeNewPostView, url: '/newPost' },
-        'settings': { file: 'settings', nav: 'navSettings', init: null, url: '/settings' }
+        'settings': { file: 'settings', nav: 'navSettings', init: null, url: '/settings' },
+        'teams': { file: 'teams', nav: null, init: initializeTeamsView, url: '/teams' }
     };
     
     const config = viewConfig[view];
@@ -655,10 +927,1320 @@ async function showView(view, updateUrl = true) {
         if (config.init) {
             config.init();
         }
+        
+        // Call view-specific initialization if it exists
+        if (view === 'settings') {
+            await settingsViewInit();
+        }
     } catch (error) {
         console.error('Error loading view:', error);
         document.getElementById('mainContent').innerHTML = '<div style="padding: 2rem; text-align: center;"><p>Error loading view. Please try again.</p></div>';
     }
+}
+
+// ============================================
+// SETTINGS VIEW FUNCTIONS
+// ============================================
+
+async function switchSettingsTab(tabName) {
+    // Hide all tabs
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    // Deactivate all buttons
+    document.querySelectorAll('.settings-tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Show selected tab
+    const tabElement = document.getElementById(tabName);
+    if (tabElement) {
+        tabElement.classList.add('active');
+    }
+    
+    // Activate selected button
+    const btn = document.querySelector(`[data-tab="${tabName}"]`);
+    if (btn) {
+        btn.classList.add('active');
+    }
+}
+
+async function initializeSettings() {
+    try {
+        // Verify currentUser is available
+        if (!currentUser) {
+            console.warn('currentUser not yet loaded, retrying...');
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        if (!currentUser) {
+            console.warn('User not authenticated, loading user settings only');
+            // Still initialize user settings even if currentUser timing issue
+        }
+        
+        // Initialize user settings first
+        await initializeUserSettings().catch(err => {
+            console.error('Failed to initialize user settings:', err);
+            // Don't throw, allow page to continue
+        });
+        
+        // Check if user is super admin
+        const isAdmin = currentUser?.is_super_admin;
+        if (isAdmin) {
+            const adminTab = document.getElementById('adminSettingsTab');
+            if (adminTab) adminTab.style.display = 'block';
+            await initializeAdminSettings().catch(err => {
+                console.error('Failed to initialize admin settings:', err);
+            });
+        }
+        
+        // Check if user is in any team
+        if (currentUser?.current_team_id) {
+            const teamTab = document.getElementById('teamSettingsTab');
+            if (teamTab) teamTab.style.display = 'block';
+            await initializeTeamSettings().catch(err => {
+                console.error('Failed to initialize team settings:', err);
+            });
+        }
+    } catch (error) {
+        console.error('Failed to initialize settings:', error);
+        // Don't throw - allow the page to render even if initialization fails
+    }
+}
+
+async function initializeUserSettings() {
+    try {
+        // Wait for apiCall to be available
+        let attempts = 0;
+        while (typeof apiCall === 'undefined' && attempts < 10) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
+        }
+        
+        if (typeof apiCall === 'undefined') {
+            throw new Error('apiCall function not available');
+        }
+        
+        const userNameInput = document.getElementById('userNameInput');
+        const userEmailInput = document.getElementById('userEmailInput');
+        
+        if (!userNameInput || !userEmailInput) {
+            console.warn('User settings inputs not found');
+            return;
+        }
+        
+        console.log('Fetching user profile from /user-settings/profile');
+        const response = await apiCall('/user-settings/profile');
+        const data = await response.json();
+        
+        if (response.ok) {
+            console.log('Profile data received:', data);
+            userNameInput.value = data.name;
+            userEmailInput.value = data.email;
+        } else {
+            console.error('Failed to load profile:', data);
+        }
+        
+        // Setup event listeners
+        const saveNameBtn = document.getElementById('saveName');
+        const saveEmailBtn = document.getElementById('saveEmail');
+        const savePasswordBtn = document.getElementById('savePassword');
+        const userLogsRefreshBtn = document.getElementById('userLogsRefresh');
+        
+        if (saveNameBtn) saveNameBtn.addEventListener('click', saveUserName);
+        if (saveEmailBtn) saveEmailBtn.addEventListener('click', saveUserEmail);
+        if (savePasswordBtn) savePasswordBtn.addEventListener('click', saveUserPassword);
+        if (userLogsRefreshBtn) userLogsRefreshBtn.addEventListener('click', () => loadUserLogs());
+        
+        // Load user logs
+        await loadUserLogs();
+    } catch (error) {
+        console.error('Failed to initialize user settings:', error);
+        // Don't throw, allow page to load with empty forms
+    }
+}
+
+async function saveUserName() {
+    const name = document.getElementById('userNameInput').value.trim();
+    
+    if (!name) {
+        showToast('Name cannot be empty', 'error');
+        return;
+    }
+    
+    try {
+        const response = await apiCall('/user-settings/profile/name', {
+            method: 'PUT',
+            body: JSON.stringify({ name })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            showToast('Name updated successfully', 'success');
+            currentUser.name = name;
+            const navUsername = document.getElementById('navUsername');
+            if (navUsername) navUsername.textContent = name;
+        } else {
+            showToast(data.error || 'Failed to update name', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving name:', error);
+        showToast('Failed to update name', 'error');
+    }
+}
+
+async function saveUserEmail() {
+    const email = document.getElementById('userEmailInput').value.trim();
+    const password = document.getElementById('currentPassword').value;
+    
+    if (!email) {
+        showToast('Email cannot be empty', 'error');
+        return;
+    }
+    
+    if (!password) {
+        showToast('Current password is required', 'error');
+        return;
+    }
+    
+    try {
+        const response = await apiCall('/user-settings/profile/email', {
+            method: 'PUT',
+            body: JSON.stringify({ email, password })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            showToast('Email updated successfully', 'success');
+            document.getElementById('currentPassword').value = '';
+        } else {
+            showToast(data.error || 'Failed to update email', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving email:', error);
+        showToast('Failed to update email', 'error');
+    }
+}
+
+async function saveUserPassword() {
+    const currentPassword = document.getElementById('passwordCurrentInput').value;
+    const newPassword = document.getElementById('passwordNewInput').value;
+    const confirmPassword = document.getElementById('passwordConfirmInput').value;
+    
+    if (!currentPassword || !newPassword || !confirmPassword) {
+        showToast('All password fields are required', 'error');
+        return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+    
+    try {
+        const response = await apiCall('/user-settings/profile/password', {
+            method: 'PUT',
+            body: JSON.stringify({ 
+                current_password: currentPassword,
+                new_password: newPassword,
+                confirm_password: confirmPassword
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            showToast('Password updated successfully', 'success');
+            document.getElementById('passwordCurrentInput').value = '';
+            document.getElementById('passwordNewInput').value = '';
+            document.getElementById('passwordConfirmInput').value = '';
+        } else {
+            showToast(data.error || 'Failed to update password', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving password:', error);
+        showToast('Failed to update password', 'error');
+    }
+}
+
+async function loadUserLogs() {
+    const search = document.getElementById('userLogsSearch')?.value || '';
+    
+    try {
+        const query = new URLSearchParams();
+        query.append('page', 1);
+        query.append('per_page', 50);
+        if (search) query.append('search', search);
+        
+        const response = await apiCall(`/user-settings/logs?${query}`);
+        const data = await response.json();
+        
+        if (response.ok) {
+            renderLogs(data.logs, 'userLogsContainer');
+        }
+    } catch (error) {
+        console.error('Error loading user logs:', error);
+    }
+}
+
+async function initializeTeamSettings() {
+    try {
+        if (!currentUser?.current_team_id) {
+            console.log('User not in any team');
+            return;
+        }
+        
+        const teamId = currentUser.current_team_id;
+        const headers = {'Authorization': `Bearer ${localStorage.getItem('access_token')}`};
+        
+        // Load team info
+        console.log('Loading team settings for team:', teamId);
+        const teamResponse = await fetch(`/api/team-settings/${teamId}`, { headers });
+        if (teamResponse.ok) {
+            const teamData = await teamResponse.json();
+            // Populate team info section
+            const teamNameEl = document.getElementById('teamName');
+            const teamDescEl = document.getElementById('teamDescription');
+            if (teamNameEl) teamNameEl.textContent = teamData.name;
+            if (teamDescEl) teamDescEl.textContent = teamData.description || 'No description';
+            
+            // Setup team info edit buttons
+            const editBtn = document.getElementById('editTeamInfoBtn');
+            const saveBtn = document.getElementById('saveTeamInfoBtn');
+            const cancelBtn = document.getElementById('cancelTeamInfoBtn');
+            
+            if (editBtn) {
+                editBtn.addEventListener('click', () => {
+                    document.getElementById('teamInfoDisplay').style.display = 'none';
+                    document.getElementById('teamInfoEdit').style.display = 'block';
+                    document.getElementById('teamNameInput').value = teamData.name;
+                    document.getElementById('teamDescriptionInput').value = teamData.description || '';
+                });
+            }
+            
+            if (saveBtn) {
+                saveBtn.addEventListener('click', () => saveTeamInfo(teamId, teamData));
+            }
+            
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', () => {
+                    document.getElementById('teamInfoDisplay').style.display = 'block';
+                    document.getElementById('teamInfoEdit').style.display = 'none';
+                });
+            }
+            
+            // Check Instagram connection status
+            loadTeamInstagramStatus(teamId);
+        }
+        
+        // Load team members
+        const membersResponse = await fetch(`/api/team-settings/${teamId}/members`, { headers });
+        if (membersResponse.ok) {
+            const membersData = await membersResponse.json();
+            renderTeamMembers(membersData.members);
+        }
+        
+        // Load pending invitations (owner/manager only)
+        const invitationsResponse = await fetch(`/api/team-settings/${teamId}/invitations`, { headers });
+        if (invitationsResponse.ok) {
+            const invData = await invitationsResponse.json();
+            renderPendingInvitations(invData.invitations);
+        } else if (invitationsResponse.status === 403) {
+            // Non-owner/manager, hide invitations section
+            const invSection = document.querySelector('[data-section="invitations"]');
+            if (invSection) invSection.style.display = 'none';
+        }
+        
+        // Load team logs
+        const logsResponse = await fetch(`/api/team-settings/${teamId}/logs?page=1&per_page=50`, { headers });
+        if (logsResponse.ok) {
+            const logsData = await logsResponse.json();
+            renderLogs(logsData.logs, 'teamLogsContainer');
+        }
+        
+        // Setup refresh buttons
+        const teamLogsRefreshBtn = document.getElementById('teamLogsRefresh');
+        if (teamLogsRefreshBtn) {
+            teamLogsRefreshBtn.addEventListener('click', () => loadTeamLogs(teamId));
+        }
+        
+        // Setup Instagram connection button
+        const connectBtn = document.getElementById('connectTeamInstagramBtn');
+        if (connectBtn) {
+            connectBtn.addEventListener('click', () => connectTeamInstagram(teamId));
+        }
+        
+        // Setup invite member button
+        const inviteBtn = document.getElementById('inviteMemberBtn');
+        if (inviteBtn) {
+            inviteBtn.addEventListener('click', () => inviteTeamMember(teamId));
+        }
+        
+    } catch (error) {
+        console.error('Error in initializeTeamSettings:', error);
+    }
+}
+
+async function loadTeamLogs(teamId) {
+    try {
+        const search = document.getElementById('teamLogsSearch')?.value || '';
+        const headers = {'Authorization': `Bearer ${localStorage.getItem('access_token')}`};
+        
+        const query = new URLSearchParams();
+        query.append('page', 1);
+        query.append('per_page', 50);
+        if (search) query.append('search', search);
+        
+        const response = await fetch(`/api/team-settings/${teamId}/logs?${query}`, { headers });
+        const data = await response.json();
+        
+        if (response.ok) {
+            renderLogs(data.logs, 'teamLogsContainer');
+        }
+    } catch (error) {
+        console.error('Error loading team logs:', error);
+    }
+}
+
+function renderTeamMembers(members) {
+    const container = document.getElementById('teamMembersContainer');
+    if (!container) return;
+    
+    if (!members || members.length === 0) {
+        container.innerHTML = '<div class="empty-state">No team members</div>';
+        return;
+    }
+    
+    // Find current user's role in the members list
+    const currentUserMember = members.find(m => m.id === currentUser?.id);
+    const currentUserRole = currentUserMember?.role || currentUser?.team_role;
+    
+    const table = document.createElement('table');
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${members.map(member => {
+                const isOwner = currentUserRole === 'owner';
+                const isManager = currentUserRole === 'manager';
+                const isCurrentUser = member.id === currentUser?.id;
+                const canModify = isOwner && !isCurrentUser;
+                const canChangeRole = canModify && member.role !== 'owner';
+                const canTransferOwnership = isOwner && !isCurrentUser && member.role !== 'owner';
+                const canRemove = (isOwner || isManager) && !isCurrentUser;
+                
+                let actionButtons = '';
+                
+                if (canChangeRole) {
+                    actionButtons += `
+                        <button onclick="openRoleChangeModal(${member.user_id}, '${member.name}', '${member.email}')" style="background-color: #2196F3; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem;">Change Role</button>
+                    `;
+                }
+                
+                if (canTransferOwnership) {
+                    actionButtons += `
+                        <button onclick="openTransferOwnershipModal(${member.user_id}, '${member.name}')" style="background-color: #ff9800; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem;">Transfer</button>
+                    `;
+                }
+                
+                if (canRemove) {
+                    actionButtons += `
+                        <button onclick="removeMember(${member.user_id})" style="background-color: #f44336; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem;">Remove</button>
+                    `;
+                }
+                
+                return `
+                    <tr>
+                        <td>${member.name}</td>
+                        <td>${member.email}</td>
+                        <td><span class="role-badge">${member.role}</span></td>
+                        <td style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            ${actionButtons || '<span style="color: #999;">-</span>'}
+                        </td>
+                    </tr>
+                `;
+            }).join('')}
+        </tbody>
+    `;
+    
+    console.log('renderTeamMembers debug:', { currentUserRole, currentUserId: currentUser?.id, membersCount: members.length, members });
+    
+    container.innerHTML = '';
+    container.appendChild(table);
+}
+
+function renderPendingInvitations(invitations) {
+    const container = document.getElementById('teamInvitationsContainer');
+    if (!container) return;
+    
+    if (!invitations || invitations.length === 0) {
+        container.innerHTML = '<div class="empty-state">No pending invitations</div>';
+        return;
+    }
+    
+    const table = document.createElement('table');
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Sent Date</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${invitations.map(inv => `
+                <tr>
+                    <td>${inv.email}</td>
+                    <td><span class="status-badge">${inv.status}</span></td>
+                    <td>${new Date(inv.created_at).toLocaleDateString()}</td>
+                    <td>
+                        <button class="btn btn-sm btn-primary" onclick="resendInvitation(${inv.id})">Resend</button>
+                        <button class="btn btn-sm btn-danger" onclick="cancelInvitation(${inv.id})">Cancel</button>
+                    </td>
+                </tr>
+            `).join('')}
+        </tbody>
+    `;
+    
+    container.innerHTML = '';
+    container.appendChild(table);
+}
+
+// Store current member being modified for modal operations
+let currentModifyingMemberId = null;
+let currentModifyingMemberName = null;
+let currentModifyingMemberEmail = null;
+
+function openRoleChangeModal(userId, userName, userEmail) {
+    console.log('openRoleChangeModal called with:', { userId, userName, userEmail });
+    
+    if (!userId) {
+        console.error('Invalid userId:', userId);
+        showToast('Error: Cannot modify this member', 'error');
+        return;
+    }
+    
+    currentModifyingMemberId = userId;
+    currentModifyingMemberName = userName;
+    currentModifyingMemberEmail = userEmail;
+    
+    const modal = document.getElementById('roleChangeModal');
+    const userInfo = document.getElementById('roleChangeUserInfo');
+    userInfo.textContent = `Change role for ${userName} (${userEmail})`;
+    
+    modal.style.display = 'flex';
+}
+
+function closeRoleChangeModal() {
+    const modal = document.getElementById('roleChangeModal');
+    modal.style.display = 'none';
+    currentModifyingMemberId = null;
+    currentModifyingMemberName = null;
+    currentModifyingMemberEmail = null;
+}
+
+async function confirmRoleChange(newRole) {
+    if (!currentModifyingMemberId) {
+        console.error('No member ID to modify');
+        return;
+    }
+    
+    // Save the ID before closing modal (since closeModal sets it to null)
+    const memberId = currentModifyingMemberId;
+    const memberName = currentModifyingMemberName;
+    
+    closeRoleChangeModal();
+    
+    try {
+        const teamId = currentUser.current_team_id;
+        console.log('Changing role for member:', { memberId, teamId, newRole });
+        
+        const response = await apiCall(`/team-settings/${teamId}/members/${memberId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ role: newRole })
+        });
+        
+        if (response.ok) {
+            showToast(`${memberName}'s role changed to ${newRole} successfully`, 'success');
+            // Reload team settings to get updated data
+            await initializeTeamSettings();
+        } else {
+            try {
+                const data = await response.json();
+                showToast(data.error || 'Failed to change user role', 'error');
+            } catch (e) {
+                showToast(`Failed to change user role (HTTP ${response.status})`, 'error');
+                console.error('Response text:', await response.text());
+            }
+        }
+    } catch (error) {
+        console.error('Error changing user role:', error);
+        showToast('Failed to change user role', 'error');
+    }
+}
+
+function openTransferOwnershipModal(userId, userName) {
+    const confirmed = confirm(`Are you sure you want to transfer ownership to ${userName}? You will become a manager.`);
+    if (!confirmed) return;
+    
+    transferOwnership(userId);
+}
+
+async function transferOwnership(userId) {
+    try {
+        const teamId = currentUser.current_team_id;
+        const response = await apiCall(`/team-settings/${teamId}/transfer-ownership`, {
+            method: 'POST',
+            body: JSON.stringify({ new_owner_id: userId })
+        });
+        
+        if (response.ok) {
+            showToast('Ownership transferred successfully', 'success');
+            await initializeTeamSettings();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to transfer ownership', 'error');
+        }
+    } catch (error) {
+        console.error('Error transferring ownership:', error);
+        showToast('Failed to transfer ownership', 'error');
+    }
+}
+
+async function removeMember(userId) {
+    if (!confirm('Are you sure you want to remove this member?')) return;
+    
+    try {
+        const teamId = currentUser.current_team_id;
+        const response = await apiCall(`/team-settings/${teamId}/members/${userId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showToast('Member removed successfully', 'success');
+            // Reload team settings
+            await initializeTeamSettings();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to remove member', 'error');
+        }
+    } catch (error) {
+        console.error('Error removing member:', error);
+        showToast('Failed to remove member', 'error');
+    }
+}
+
+async function resendInvitation(invitationId) {
+    try {
+        const teamId = currentUser.current_team_id;
+        const response = await apiCall(`/team-settings/${teamId}/invitations/${invitationId}/resend`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showToast('Invitation resent successfully', 'success');
+            await initializeTeamSettings();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to resend invitation', 'error');
+        }
+    } catch (error) {
+        console.error('Error resending invitation:', error);
+        showToast('Failed to resend invitation', 'error');
+    }
+}
+
+async function cancelInvitation(invitationId) {
+    if (!confirm('Are you sure you want to cancel this invitation?')) return;
+    
+    try {
+        const teamId = currentUser.current_team_id;
+        const response = await apiCall(`/team-settings/${teamId}/invitations/${invitationId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showToast('Invitation cancelled successfully', 'success');
+            await initializeTeamSettings();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to cancel invitation', 'error');
+        }
+    } catch (error) {
+        console.error('Error cancelling invitation:', error);
+        showToast('Failed to cancel invitation', 'error');
+    }
+}
+
+async function loadTeamInstagramStatus(teamId) {
+    try {
+        const response = await apiCall(`/team-settings/${teamId}/instagram`);
+        if (response.ok) {
+            const data = await response.json();
+            const statusEl = document.getElementById('teamInstagramStatus');
+            const formEl = document.getElementById('teamInstagramForm');
+            
+            if (data.instagram_connected) {
+                statusEl.innerHTML = `
+                    <div class="info-box">
+                        <p>✓ Connected to <strong>@${data.instagram_username}</strong></p>
+                        <p style="font-size: 0.9em; color: #666; margin-top: 8px;">
+                            Token expires: ${new Date(data.token_expires_at).toLocaleDateString()}
+                        </p>
+                        <button class="btn btn-sm btn-danger" onclick="disconnectTeamInstagram(${teamId})" style="margin-top: 10px;">
+                            Disconnect Instagram
+                        </button>
+                    </div>
+                `;
+                if (formEl) formEl.style.display = 'none';
+            } else {
+                statusEl.innerHTML = `<p style="color: #666;">Not connected yet. Add your Instagram credentials below.</p>`;
+                if (formEl) formEl.style.display = 'block';
+            }
+        }
+    } catch (error) {
+        console.error('Error loading Instagram status:', error);
+    }
+}
+
+async function connectTeamInstagram(teamId) {
+    const token = document.getElementById('teamInstagramToken')?.value;
+    const accountId = document.getElementById('teamInstagramAccountId')?.value;
+    
+    if (!token) {
+        showToast('Please enter an access token', 'error');
+        return;
+    }
+    
+    try {
+        const response = await apiCall(`/team-settings/${teamId}/instagram/connect`, {
+            method: 'POST',
+            body: JSON.stringify({
+                access_token: token,
+                instagram_account_id: accountId || undefined
+            })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            showToast(`Instagram connected: @${data.instagram_username}`, 'success');
+            document.getElementById('teamInstagramToken').value = '';
+            document.getElementById('teamInstagramAccountId').value = '';
+            await loadTeamInstagramStatus(teamId);
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to connect Instagram', 'error');
+        }
+    } catch (error) {
+        console.error('Error connecting Instagram:', error);
+        showToast('Failed to connect Instagram', 'error');
+    }
+}
+
+async function disconnectTeamInstagram(teamId) {
+    if (!confirm('Are you sure you want to disconnect this Instagram account?')) return;
+    
+    try {
+        const response = await apiCall(`/team-settings/${teamId}/instagram/disconnect`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showToast('Instagram disconnected successfully', 'success');
+            await loadTeamInstagramStatus(teamId);
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to disconnect Instagram', 'error');
+        }
+    } catch (error) {
+        console.error('Error disconnecting Instagram:', error);
+        showToast('Failed to disconnect Instagram', 'error');
+    }
+}
+
+async function saveTeamInfo(teamId, originalTeamData) {
+    const name = document.getElementById('teamNameInput')?.value.trim();
+    const description = document.getElementById('teamDescriptionInput')?.value.trim();
+    
+    if (!name) {
+        showToast('Team name cannot be empty', 'error');
+        return;
+    }
+    
+    try {
+        const response = await apiCall(`/teams/teams/${teamId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ name, description })
+        });
+        
+        if (response.ok) {
+            showToast('Team information updated successfully', 'success');
+            // Update display
+            document.getElementById('teamName').textContent = name;
+            document.getElementById('teamDescription').textContent = description || 'No description';
+            // Hide edit form, show display
+            document.getElementById('teamInfoDisplay').style.display = 'block';
+            document.getElementById('teamInfoEdit').style.display = 'none';
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to update team information', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving team info:', error);
+        showToast('Failed to update team information', 'error');
+    }
+}
+
+async function inviteTeamMember(teamId) {
+    // Prevent duplicate requests
+    if (window._invitingInProgress) {
+        console.log('Invite already in progress');
+        return;
+    }
+    
+    const email = document.getElementById('inviteMemberEmail')?.value;
+    
+    console.log('Invite button clicked, email:', email, 'teamId:', teamId);
+    
+    if (!email) {
+        showToast('Please enter an email address', 'error');
+        return;
+    }
+    
+    // Simple email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        showToast('Please enter a valid email address', 'error');
+        return;
+    }
+    
+    window._invitingInProgress = true;
+    const inviteBtn = document.getElementById('inviteMemberBtn');
+    if (inviteBtn) inviteBtn.disabled = true;
+    
+    try {
+        const response = await apiCall(`/team-settings/${teamId}/invite`, {
+            method: 'POST',
+            body: JSON.stringify({ email })
+        });
+        
+        console.log('Invite response status:', response.status);
+        
+        if (response.ok) {
+            const data = await response.json();
+            showToast(`Invitation sent to ${email}`, 'success');
+            document.getElementById('inviteMemberEmail').value = '';
+            // Reload invitations only, not the entire team settings
+            const headers = {'Authorization': `Bearer ${localStorage.getItem('access_token')}`};
+            const invResponse = await fetch(`/api/team-settings/${teamId}/invitations`, { headers });
+            if (invResponse.ok) {
+                const invData = await invResponse.json();
+                renderPendingInvitations(invData.invitations);
+            }
+        } else {
+            const data = await response.json();
+            console.log('Invite error:', data);
+            showToast(data.error || 'Failed to send invitation', 'error');
+        }
+    } catch (error) {
+        console.error('Error inviting team member:', error);
+        showToast('Failed to send invitation', 'error');
+    } finally {
+        window._invitingInProgress = false;
+        if (inviteBtn) inviteBtn.disabled = false;
+    }
+}
+
+async function initializeAdminSettings() {
+    try {
+        if (!currentUser?.is_super_admin) {
+            console.log('User is not a super admin');
+            return;
+        }
+        
+        console.log('Loading admin settings');
+        
+        // Load users
+        const usersResponse = await apiCall('/admin-settings/users');
+        if (usersResponse.ok) {
+            const usersData = await usersResponse.json();
+            renderAdminUsers(usersData.users);
+            
+            // Setup refresh button
+            const usersRefreshBtn = document.getElementById('usersRefresh');
+            if (usersRefreshBtn) {
+                usersRefreshBtn.addEventListener('click', () => loadAdminUsers());
+            }
+            
+            // Setup search
+            const usersSearchInput = document.getElementById('usersSearch');
+            if (usersSearchInput) {
+                usersSearchInput.addEventListener('input', (e) => {
+                    const filtered = usersData.users.filter(u => 
+                        u.name.toLowerCase().includes(e.target.value.toLowerCase()) ||
+                        u.email.toLowerCase().includes(e.target.value.toLowerCase())
+                    );
+                    renderAdminUsers(filtered);
+                });
+            }
+        }
+        
+        // Load teams
+        const teamsResponse = await apiCall('/admin-settings/teams');
+        if (teamsResponse.ok) {
+            const teamsData = await teamsResponse.json();
+            renderAdminTeams(teamsData.teams);
+            
+            // Setup refresh button
+            const teamsRefreshBtn = document.getElementById('teamsRefresh');
+            if (teamsRefreshBtn) {
+                teamsRefreshBtn.addEventListener('click', () => loadAdminTeams());
+            }
+            
+            // Setup search
+            const teamsSearchInput = document.getElementById('teamsSearch');
+            if (teamsSearchInput) {
+                teamsSearchInput.addEventListener('input', (e) => {
+                    const filtered = teamsData.teams.filter(t => 
+                        t.name.toLowerCase().includes(e.target.value.toLowerCase())
+                    );
+                    renderAdminTeams(filtered);
+                });
+            }
+        }
+        
+        // Load domain settings
+        const domainResponse = await apiCall('/admin-settings/domain');
+        if (domainResponse.ok) {
+            const domainData = await domainResponse.json();
+            const domainInput = document.getElementById('appDomainInput');
+            if (domainInput) domainInput.value = domainData.domain || '';
+        }
+        
+        // Setup domain save button
+        const saveDomainBtn = document.getElementById('saveDomainBtn');
+        if (saveDomainBtn) {
+            saveDomainBtn.addEventListener('click', saveAppDomain);
+        }
+        
+        // Load email settings
+        loadEmailSettings();
+        
+        // Setup email buttons
+        const saveEmailBtn = document.getElementById('saveEmailSettingsBtn');
+        if (saveEmailBtn) {
+            saveEmailBtn.addEventListener('click', saveEmailSettings);
+        }
+        
+        const testEmailBtn = document.getElementById('testEmailBtn');
+        if (testEmailBtn) {
+            testEmailBtn.addEventListener('click', sendTestEmail);
+        }
+        
+        // Setup create team button
+        const createTeamBtn = document.getElementById('createTeamBtn');
+        if (createTeamBtn) {
+            createTeamBtn.addEventListener('click', showCreateTeamModal);
+        }
+        
+    } catch (error) {
+        console.error('Error in initializeAdminSettings:', error);
+    }
+}
+
+async function loadAdminUsers() {
+    try {
+        const response = await apiCall('/admin-settings/users');
+        const data = await response.json();
+        if (response.ok) {
+            renderAdminUsers(data.users);
+        }
+    } catch (error) {
+        console.error('Error loading admin users:', error);
+    }
+}
+
+async function loadAdminTeams() {
+    try {
+        const response = await apiCall('/admin-settings/teams');
+        const data = await response.json();
+        if (response.ok) {
+            renderAdminTeams(data.teams);
+        }
+    } catch (error) {
+        console.error('Error loading admin teams:', error);
+    }
+}
+
+function renderAdminUsers(users) {
+    const container = document.getElementById('adminUsersContainer');
+    if (!container) return;
+    
+    if (!users || users.length === 0) {
+        container.innerHTML = '<div class="empty-state">No users found</div>';
+        return;
+    }
+    
+    const table = document.createElement('table');
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Admin</th>
+                <th>Active</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${users.map(user => `
+                <tr>
+                    <td>${user.name}</td>
+                    <td>${user.email}</td>
+                    <td>${user.is_super_admin ? '✓' : '✗'}</td>
+                    <td>${user.is_active ? '✓' : '✗'}</td>
+                    <td>
+                        ${user.id !== currentUser.id ? `
+                            ${!user.is_super_admin ? `
+                                <button class="btn btn-sm btn-success" onclick="promoteToAdmin(${user.id})">Promote</button>
+                            ` : `
+                                <button class="btn btn-sm btn-warning" onclick="demoteFromAdmin(${user.id})">Demote</button>
+                            `}
+                            ${user.is_active ? `
+                                <button class="btn btn-sm btn-danger" onclick="deactivateUser(${user.id})">Deactivate</button>
+                            ` : ''}
+                            <button class="btn btn-sm btn-dark" onclick="deleteUser(${user.id})">Delete</button>
+                        ` : '<span class="text-muted">Self</span>'}
+                    </td>
+                </tr>
+            `).join('')}
+        </tbody>
+    `;
+    
+    container.innerHTML = '';
+    container.appendChild(table);
+}
+
+function renderAdminTeams(teams) {
+    const container = document.getElementById('adminTeamsContainer');
+    if (!container) return;
+    
+    if (!teams || teams.length === 0) {
+        container.innerHTML = '<div class="empty-state">No teams found</div>';
+        return;
+    }
+    
+    const table = document.createElement('table');
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Created By</th>
+                <th>Created Date</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${teams.map(team => `
+                <tr>
+                    <td>${team.name}</td>
+                    <td>${team.description || '-'}</td>
+                    <td>${team.created_by_name || 'Unknown'}</td>
+                    <td>${new Date(team.created_at).toLocaleDateString()}</td>
+                    <td>
+                        <button class="btn btn-sm btn-primary" onclick="editTeam(${team.id})">Edit</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteTeam(${team.id})">Delete</button>
+                    </td>
+                </tr>
+            `).join('')}
+        </tbody>
+    `;
+    
+    container.innerHTML = '';
+    container.appendChild(table);
+}
+
+async function saveAppDomain() {
+    const domain = document.getElementById('appDomainInput')?.value;
+    if (!domain) {
+        showToast('Please enter a domain', 'error');
+        return;
+    }
+    
+    try {
+        const response = await apiCall('/admin-settings/domain', {
+            method: 'POST',
+            body: JSON.stringify({ domain })
+        });
+        
+        if (response.ok) {
+            showToast('Domain saved successfully', 'success');
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to save domain', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving domain:', error);
+        showToast('Failed to save domain', 'error');
+    }
+}
+
+async function loadEmailSettings() {
+    try {
+        const response = await apiCall('/admin-settings/email');
+        if (response.ok) {
+            const data = await response.json();
+            
+            // Populate form fields
+            const mailServer = document.getElementById('mailServer');
+            const mailPort = document.getElementById('mailPort');
+            const mailUseTLS = document.getElementById('mailUseTLS');
+            const mailUsername = document.getElementById('mailUsername');
+            const mailPassword = document.getElementById('mailPassword');
+            const mailFromEmail = document.getElementById('mailFromEmail');
+            const mailFromName = document.getElementById('mailFromName');
+            
+            if (mailServer) mailServer.value = data.mail_server || '';
+            if (mailPort) mailPort.value = data.mail_port || 587;
+            if (mailUseTLS) mailUseTLS.checked = data.mail_use_tls === true || data.mail_use_tls === 'true';
+            if (mailUsername) mailUsername.value = data.mail_username || '';
+            if (mailPassword) mailPassword.value = data.mail_password || '';
+            if (mailFromEmail) mailFromEmail.value = data.mail_from_email || 'noreply@postwave.com';
+            if (mailFromName) mailFromName.value = data.mail_from_name || 'PostWave';
+        }
+    } catch (error) {
+        console.error('Error loading email settings:', error);
+    }
+}
+
+async function saveEmailSettings() {
+    try {
+        const settings = {
+            mail_server: document.getElementById('mailServer')?.value || '',
+            mail_port: parseInt(document.getElementById('mailPort')?.value || '587'),
+            mail_use_tls: document.getElementById('mailUseTLS')?.checked || false,
+            mail_username: document.getElementById('mailUsername')?.value || '',
+            mail_password: document.getElementById('mailPassword')?.value || '',
+            mail_from_email: document.getElementById('mailFromEmail')?.value || 'noreply@postwave.com',
+            mail_from_name: document.getElementById('mailFromName')?.value || 'PostWave'
+        };
+        
+        // Validate required fields
+        if (!settings.mail_server) {
+            showToast('Mail server is required', 'error');
+            return;
+        }
+        if (!settings.mail_username) {
+            showToast('Mail username is required', 'error');
+            return;
+        }
+        if (!settings.mail_password) {
+            showToast('Mail password is required', 'error');
+            return;
+        }
+        
+        const response = await apiCall('/admin-settings/email', {
+            method: 'POST',
+            body: JSON.stringify(settings)
+        });
+        
+        if (response.ok) {
+            showToast('Email settings saved successfully', 'success');
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to save email settings', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving email settings:', error);
+        showToast('Failed to save email settings', 'error');
+    }
+}
+
+async function sendTestEmail() {
+    try {
+        const testEmail = document.getElementById('mailFromEmail')?.value || currentUser?.email;
+        
+        if (!testEmail) {
+            showToast('Please configure a from email first', 'error');
+            return;
+        }
+        
+        showToast('Sending test email...', 'info');
+        
+        const response = await apiCall('/admin-settings/email/test', {
+            method: 'POST',
+            body: JSON.stringify({ email: testEmail })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            showToast(`✓ Test email sent to ${data.recipient}`, 'success');
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to send test email', 'error');
+        }
+    } catch (error) {
+        console.error('Error sending test email:', error);
+        showToast('Failed to send test email', 'error');
+    }
+}
+
+async function promoteToAdmin(userId) {
+    if (!confirm('Promote this user to admin?')) return;
+    
+    try {
+        const response = await apiCall(`/admin-settings/users/${userId}/promote`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showToast('User promoted to admin', 'success');
+            await loadAdminUsers();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to promote user', 'error');
+        }
+    } catch (error) {
+        console.error('Error promoting user:', error);
+        showToast('Failed to promote user', 'error');
+    }
+}
+
+async function demoteFromAdmin(userId) {
+    if (!confirm('Demote this user from admin?')) return;
+    
+    try {
+        const response = await apiCall(`/admin-settings/users/${userId}/demote`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showToast('User demoted from admin', 'success');
+            await loadAdminUsers();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to demote user', 'error');
+        }
+    } catch (error) {
+        console.error('Error demoting user:', error);
+        showToast('Failed to demote user', 'error');
+    }
+}
+
+async function deactivateUser(userId) {
+    if (!confirm('Deactivate this user?')) return;
+    
+    try {
+        const response = await apiCall(`/admin-settings/users/${userId}/deactivate`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showToast('User deactivated', 'success');
+            await loadAdminUsers();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to deactivate user', 'error');
+        }
+    } catch (error) {
+        console.error('Error deactivating user:', error);
+        showToast('Failed to deactivate user', 'error');
+    }
+}
+
+async function deleteUser(userId) {
+    if (!confirm('Permanently delete this user? This cannot be undone!')) return;
+    
+    try {
+        const response = await apiCall(`/admin-settings/users/${userId}/delete`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showToast('User deleted', 'success');
+            await loadAdminUsers();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to delete user', 'error');
+        }
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        showToast('Failed to delete user', 'error');
+    }
+}
+
+function showCreateTeamModal() {
+    // TODO: Implement create team modal
+    showToast('Create team modal not yet implemented', 'info');
+}
+
+async function editTeam(teamId) {
+    // TODO: Implement edit team modal
+    showToast('Edit team modal not yet implemented', 'info');
+}
+
+async function deleteTeam(teamId) {
+    if (!confirm('Delete this team? This cannot be undone!')) return;
+    
+    try {
+        const response = await apiCall(`/admin-settings/teams/${teamId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showToast('Team deleted', 'success');
+            await loadAdminTeams();
+        } else {
+            const data = await response.json();
+            showToast(data.error || 'Failed to delete team', 'error');
+        }
+    } catch (error) {
+        console.error('Error deleting team:', error);
+        showToast('Failed to delete team', 'error');
+    }
+}
+
+function renderLogs(logs, containerId) {
+    const container = document.getElementById(containerId);
+    
+    if (!logs || logs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No activity logs found</div>';
+        return;
+    }
+    
+    const table = document.createElement('table');
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>Date & Time</th>
+                <th>Action</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${logs.map(log => `
+                <tr>
+                    <td>${new Date(log.created_at).toLocaleString()}</td>
+                    <td><span class="status-badge" style="background: rgba(0,123,255,0.1); color: var(--primary-color);">${log.action_type}</span></td>
+                    <td>${log.description}</td>
+                </tr>
+            `).join('')}
+        </tbody>
+    `;
+    
+    container.innerHTML = '';
+    container.appendChild(table);
 }
 
 // API Helper
@@ -725,13 +2307,13 @@ async function refreshDashboardData() {
 async function handleLogin(e) {
     e.preventDefault();
     
-    const username = document.getElementById('loginUsername').value;
+    const email = document.getElementById('loginEmail').value;
     const password = document.getElementById('loginPassword').value;
     
     try {
         const response = await apiCall('/auth/login', {
             method: 'POST',
-            body: JSON.stringify({ username, password }),
+            body: JSON.stringify({ email, password }),
             skipAuth: true,
         });
         
@@ -751,33 +2333,337 @@ async function handleLogin(e) {
     }
 }
 
-async function handleRegister(e) {
+
+// New invitation flow - Step 1: Accept Invitation
+async function handleAcceptInvitation() {
+    const token = new URLSearchParams(window.location.search).get('token');
+    
+    if (!token) {
+        showToast('Invalid invitation link', 'error');
+        navigateTo('/login');
+        return;
+    }
+    
+    // Load invitation details and check if user exists
+    try {
+        const response = await fetch(`/api/teams/accept-invite/${token}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        
+        console.log('handleAcceptInvitation - API response:', {
+            ok: response.ok,
+            currentUser: !!currentUser,
+            user_exists: data.user_exists,
+            email: data.email
+        });
+        
+        if (response.ok) {
+            // Check if user is already logged in
+            if (currentUser) {
+                console.log('User already logged in, redirecting to dashboard');
+                showToast('You are already logged in. Joining team...', 'info');
+                // Accept the invitation for already logged in user
+                try {
+                    const acceptResponse = await apiCall(`/teams/accept-invite/${token}`, {
+                        method: 'POST',
+                        body: JSON.stringify({ name: currentUser.name }),
+                        skipAuth: false,
+                    });
+                    if (acceptResponse.ok) {
+                        showToast('Successfully joined team!', 'success');
+                        setTimeout(() => navigateTo('/dashboard'), 500);
+                    }
+                } catch (err) {
+                    console.error('Error accepting invitation:', err);
+                }
+            } else if (data.user_exists) {
+                console.log('Showing login form - User exists, need login');
+                showStep2b(data);
+            } else {
+                console.log('Showing registration form - New user');
+                showStep2a(data);
+            }
+        } else {
+            showToast(data.error || 'Invalid invitation', 'error');
+        }
+    } catch (error) {
+        console.error('Error accepting invitation:', error);
+        showToast('An error occurred', 'error');
+    }
+}
+
+// Step 2a: Create new account
+function showStep2a(invitationData) {
+    // Check if elements exist
+    const step1Buttons = document.getElementById('step1Buttons');
+    const createAccountForm = document.getElementById('createAccountForm');
+    const createEmail = document.getElementById('createEmail');
+    
+    if (!step1Buttons || !createAccountForm || !createEmail) {
+        console.error('Required elements not found for showStep2a');
+        showToast('Error loading invitation page', 'error');
+        return;
+    }
+    
+    // Hide step 1 buttons and show step 2a form
+    step1Buttons.style.display = 'none';
+    createAccountForm.style.display = 'block';
+    
+    // Pre-fill email
+    createEmail.value = invitationData.email;
+    
+    console.log('showStep2a - Registration form displayed for:', invitationData.email);
+}
+
+// Step 2a: Handle create account form submission
+async function handleCreateAccountStep2a(e) {
     e.preventDefault();
     
-    const username = document.getElementById('registerUsername').value;
-    const email = document.getElementById('registerEmail').value;
-    const password = document.getElementById('registerPassword').value;
+    const password = document.getElementById('createPassword').value;
+    const passwordConfirm = document.getElementById('createPasswordConfirm').value;
+    const name = document.getElementById('createName').value;
+    
+    if (password !== passwordConfirm) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+    
+    if (password.length < 6) {
+        showToast('Password must be at least 6 characters', 'error');
+        return;
+    }
+    
+    const token = new URLSearchParams(window.location.search).get('token');
+    
+    if (!token) {
+        showToast('Invalid invitation link', 'error');
+        navigateTo('/login');
+        return;
+    }
     
     try {
-        const response = await apiCall('/auth/register', {
+        const response = await apiCall(`/teams/accept-invite/${token}`, {
             method: 'POST',
-            body: JSON.stringify({ username, email, password }),
+            body: JSON.stringify({ password, name }),
             skipAuth: true,
         });
         
         const data = await response.json();
         
         if (response.ok) {
-            localStorage.setItem('access_token', data.access_token);
-            localStorage.setItem('refresh_token', data.refresh_token);
-            currentUser = data.user;
-            showToast('Registration successful!', 'success');
-            navigateTo('/dashboard');
+            showToast('Account created successfully! Please log in with your credentials.', 'success');
+            
+            // Store the invitation data for later
+            window.currentInvitationData = data;
+            
+            // Show the login form instead of trying to go to dashboard
+            // User needs to login to properly authenticate
+            const createAccountForm = document.getElementById('createAccountForm');
+            const invitationLoginForm = document.getElementById('invitationLoginForm');
+            const invitationLoginEmail = document.getElementById('invitationLoginEmail');
+            const loginTeamName = document.getElementById('loginTeamName');
+            
+            if (createAccountForm) createAccountForm.style.display = 'none';
+            if (invitationLoginForm) {
+                invitationLoginForm.style.display = 'block';
+                if (invitationLoginEmail) invitationLoginEmail.value = data.email;
+                if (loginTeamName) loginTeamName.textContent = data.team?.name || 'the team';
+            }
+            
+            console.log('Account created, showing login form for:', data.email);
         } else {
-            showToast(data.error || 'Registration failed', 'error');
+            showToast(data.error || 'Failed to create account', 'error');
         }
     } catch (error) {
+        console.error('Error creating account:', error);
         showToast('An error occurred', 'error');
+    }
+}
+
+// Step 2b: Existing user needs to login
+function showStep2b(invitationData) {
+    // Check if elements exist
+    const step1Buttons = document.getElementById('step1Buttons');
+    const invitationLoginForm = document.getElementById('invitationLoginForm');
+    const invitationLoginEmail = document.getElementById('invitationLoginEmail');
+    const loginTeamName = document.getElementById('loginTeamName');
+    
+    if (!step1Buttons || !invitationLoginForm || !invitationLoginEmail || !loginTeamName) {
+        console.error('Required elements not found for showStep2b');
+        showToast('Error loading invitation page', 'error');
+        return;
+    }
+    
+    // Hide step 1 buttons and show step 2b form
+    step1Buttons.style.display = 'none';
+    invitationLoginForm.style.display = 'block';
+    
+    // Pre-fill email
+    invitationLoginEmail.value = invitationData.email;
+    loginTeamName.textContent = invitationData.team?.name || 'the team';
+    
+    console.log('showStep2b - Login form displayed for existing user:', invitationData.email);
+}
+
+// Step 2b: Handle login form submission
+async function handleLoginStep2b(e) {
+    e.preventDefault();
+    
+    const password = document.getElementById('invitationLoginPassword').value;
+    const token = new URLSearchParams(window.location.search).get('token');
+    
+    if (!token) {
+        showToast('Invalid invitation link', 'error');
+        navigateTo('/login');
+        return;
+    }
+    
+    const email = document.getElementById('invitationLoginEmail').value;
+    
+    try {
+        // First login the user
+        const loginResponse = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ email, password })
+        });
+        
+        const loginData = await loginResponse.json();
+        
+        if (loginResponse.ok) {
+            // Set tokens so apiCall will work properly
+            localStorage.setItem('access_token', loginData.access_token);
+            localStorage.setItem('refresh_token', loginData.refresh_token);
+            currentUser = loginData.user;
+            
+            // Now accept the invitation with the token
+            const response = await apiCall(`/teams/accept-invite/${token}`, {
+                method: 'POST',
+                body: JSON.stringify({ password, name: loginData.user.name }),
+                skipAuth: false,
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                showToast('Logged in and joined team successfully!', 'success');
+                invitationToken = null;
+                invitationDetailsLoaded = false;
+                
+                // Redirect to dashboard
+                setTimeout(() => navigateTo('/dashboard'), 500);
+            } else {
+                showToast(data.error || 'Failed to join team', 'error');
+            }
+        } else {
+            showToast(loginData.error || 'Login failed', 'error');
+        }
+    } catch (error) {
+        console.error('Error logging in:', error);
+        showToast('An error occurred', 'error');
+    }
+}
+
+// Step 2c: Proceed to team dashboard
+async function handleProceedToTeamDashboard() {
+    navigateTo('/dashboard');
+}
+
+// Decline invitation
+async function handleDeclineInvitation() {
+    showToast('Invitation declined', 'info');
+    navigateTo('/login');
+}
+
+async function loadInvitationDetails(token) {
+    try {
+        const response = await fetch(`/api/teams/accept-invite/${token}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Store invitation data for later use
+            window.currentInvitationData = data;
+            
+            const invitationTeamNameEl = document.getElementById('invitationTeamName');
+            if (invitationTeamNameEl && data.team) {
+                invitationTeamNameEl.textContent = `Join ${data.team.name}`;
+            }
+            
+            const invitationExpiryEl = document.getElementById('invitationExpiry');
+            if (invitationExpiryEl && data.expires_at) {
+                const expiryDate = new Date(data.expires_at);
+                const now = new Date();
+                const daysLeft = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+                invitationExpiryEl.textContent = `Invitation expires in ${daysLeft} days`;
+            }
+            
+            // Show step 1 buttons
+            const step1ButtonsEl = document.getElementById('step1Buttons');
+            if (step1ButtonsEl) {
+                step1ButtonsEl.style.display = 'flex';
+            }
+        } else {
+            // Show error page instead of redirecting
+            const loginPage = document.getElementById('loginPage');
+            const invitationPage = document.getElementById('invitationPage');
+            
+            if (invitationPage) {
+                invitationPage.innerHTML = `
+                    <div class="auth-container">
+                        <div class="auth-header">
+                            <h1>PostWave</h1>
+                        </div>
+                        <div style="text-align: center; padding: 2rem 0;">
+                            <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
+                            <h2 style="margin-bottom: 1rem; font-size: 1.5rem;">${data.error || 'Invalid Invitation'}</h2>
+                            <p style="color: var(--text-secondary); margin-bottom: 2rem;">
+                                ${data.error === 'Invitation already accepted or declined' ? 'This invitation has already been used.' : 
+                                  data.error === 'Invitation has expired' ? 'This invitation link has expired.' : 
+                                  'This invitation is no longer valid.'}
+                            </p>
+                            <a href="/login" class="btn btn-primary" style="text-decoration: none; display: inline-block;">Back to Login</a>
+                        </div>
+                    </div>
+                `;
+            }
+            if (loginPage) loginPage.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading invitation:', error);
+        const invitationPage = document.getElementById('invitationPage');
+        const loginPage = document.getElementById('loginPage');
+        
+        if (invitationPage) {
+            invitationPage.innerHTML = `
+                <div class="auth-container">
+                    <div class="auth-header">
+                        <h1>PostWave</h1>
+                    </div>
+                    <div style="text-align: center; padding: 2rem 0;">
+                        <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
+                        <h2 style="margin-bottom: 1rem; font-size: 1.5rem;">Invalid Invitation</h2>
+                        <p style="color: var(--text-secondary); margin-bottom: 2rem;">
+                            The invitation link is invalid or has expired.
+                        </p>
+                        <a href="/login" class="btn btn-primary" style="text-decoration: none; display: inline-block;">Back to Login</a>
+                    </div>
+                </div>
+            `;
+        }
+        if (loginPage) loginPage.style.display = 'none';
     }
 }
 
@@ -786,6 +2672,8 @@ function handleLogout() {
     localStorage.removeItem('refresh_token');
     currentUser = null;
     navbarListenersSetup = false; // Reset the flag so listeners can be set up again on next login
+    invitationDetailsLoaded = false; // Reset invitation flag
+    invitationToken = null; // Clear invitation token
     navigateTo('/login');
     showToast('Logged out successfully', 'info');
 }
@@ -800,14 +2688,33 @@ async function fetchCurrentUser() {
             
             // Cache profile data for preview
             userProfileData = {
-                username: data.instagram_username || data.username,
+                username: data.instagram_username || data.name,
                 profilePicture: data.profile_picture || null
             };
             
             const navUsername = document.getElementById('navUsername');
             const previewUsername = document.getElementById('previewUsername');
-            if (navUsername) navUsername.textContent = data.username;
+            if (navUsername) navUsername.textContent = data.name;
             if (previewUsername) previewUsername.textContent = userProfileData.username;
+            
+            // Fetch and display current team
+            try {
+                const teamsResponse = await apiCall('/teams/teams');
+                const teamsData = await teamsResponse.json();
+                if (teamsResponse.ok && teamsData.teams && teamsData.teams.length > 0) {
+                    // Use first team as current team (can be improved with user's preferred team)
+                    const currentTeam = teamsData.teams[0];
+                    currentUser.current_team_id = currentTeam.id;
+                    
+                    const navTeamName = document.getElementById('navTeamName');
+                    if (navTeamName) {
+                        navTeamName.textContent = currentTeam.name;
+                    }
+                }
+            } catch (error) {
+                console.warn('Failed to fetch teams:', error);
+                // Continue anyway - teams are optional
+            }
             
             // Fetch profile picture if user has Instagram connected and no picture cached yet
             if (data.instagram_connected && !data.profile_picture) {
@@ -1407,7 +3314,7 @@ async function refreshInstagramPosts() {
     refreshBtn.textContent = 'Refreshing...';
     
     try {
-        const response = await apiCall('/api/instagram/refresh-cache', { method: 'POST' });
+        const response = await apiCall('/instagram/refresh-cache', { method: 'POST' });
         const data = await response.json();
         
         if (response.ok) {

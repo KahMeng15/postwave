@@ -1,0 +1,59 @@
+<!-- Setup Page - Initialize Super Admin -->
+<div id="setupPage" class="auth-container" style="display: none;">
+    <div class="auth-box">
+        <div class="auth-header">
+            <h1>PostWave Setup</h1>
+            <p>Create your super admin account</p>
+        </div>
+        
+        <form id="setupForm">
+            <div class="form-group">
+                <label for="setupName">Full Name</label>
+                <input 
+                    type="text" 
+                    id="setupName" 
+                    name="name" 
+                    placeholder="Your full name"
+                    required
+                    minlength="3"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="setupEmail">Email</label>
+                <input 
+                    type="email" 
+                    id="setupEmail" 
+                    name="email" 
+                    placeholder="your@email.com"
+                    required
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="setupPassword">Password</label>
+                <input 
+                    type="password" 
+                    id="setupPassword" 
+                    name="password" 
+                    placeholder="Create a strong password"
+                    required
+                    minlength="8"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="setupConfirmPassword">Confirm Password</label>
+                <input 
+                    type="password" 
+                    id="setupConfirmPassword" 
+                    name="confirmPassword" 
+                    placeholder="Confirm your password"
+                    required
+                >
+            </div>
+            
+            <button type="submit" class="btn btn-primary btn-block">Create Super Admin Account</button>
+        </form>
+    </div>
+</div>

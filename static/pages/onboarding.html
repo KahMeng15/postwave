@@ -1,0 +1,289 @@
+<!-- PostWave Onboarding Wizard -->
+<div id="onboardingWizard" class="onboarding-container">
+    <!-- Step 1: Super Admin Setup -->
+    <div id="step1" class="onboarding-step active">
+        <div class="onboarding-content">
+            <div class="onboarding-header">
+                <div class="step-counter">Step 1 of 4</div>
+                <h2>Welcome to PostWave</h2>
+                <p>Let's set up your super admin account to get started</p>
+            </div>
+            <form id="adminSetupForm" class="onboarding-form">
+                <div class="form-group">
+                    <label for="adminName">Full Name</label>
+                    <input type="text" id="adminName" placeholder="Enter your full name" required>
+                </div>
+                <div class="form-group">
+                    <label for="adminEmail">Email</label>
+                    <input type="email" id="adminEmail" placeholder="Enter your email address" required>
+                </div>
+                <div class="form-group">
+                    <label for="adminPassword">Password</label>
+                    <input type="password" id="adminPassword" placeholder="Create a strong password" required>
+                </div>
+                <div class="form-group">
+                    <label for="adminPasswordConfirm">Confirm Password</label>
+                    <input type="password" id="adminPasswordConfirm" placeholder="Confirm your password" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Continue to Next Step</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Step 2: SMTP Configuration -->
+    <div id="step2" class="onboarding-step" style="display: none;">
+        <div class="onboarding-content">
+            <div class="onboarding-header">
+                <div class="step-counter">Step 2 of 4</div>
+                <h2>Email Configuration (SMTP)</h2>
+                <p>Configure email settings for team invitations</p>
+            </div>
+            <form id="smtpSetupForm" class="onboarding-form">
+                <div class="form-group">
+                    <label for="mailServer">Mail Server (e.g., smtp.gmail.com)</label>
+                    <input type="text" id="mailServer" placeholder="smtp.gmail.com" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="mailPort">Port</label>
+                        <input type="number" id="mailPort" placeholder="587" value="587" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="mailUseTls">
+                            <input type="checkbox" id="mailUseTls" checked>
+                            Use TLS
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="mailUsername">Email Address</label>
+                    <input type="email" id="mailUsername" placeholder="your-email@gmail.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="mailPassword">Email Password / App Password</label>
+                    <input type="password" id="mailPassword" placeholder="Your email password or app password" required>
+                </div>
+                <div class="form-group">
+                    <label for="mailFromEmail">From Email Address</label>
+                    <input type="email" id="mailFromEmail" placeholder="noreply@postwave.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="mailFromName">From Name</label>
+                    <input type="text" id="mailFromName" placeholder="PostWave" value="PostWave" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Test & Continue</button>
+            </form>
+            <button id="skipSmtp" class="btn btn-secondary btn-block">Skip Email Setup (Can configure later)</button>
+        </div>
+    </div>
+
+    <!-- Step 3: URL Configuration -->
+    <div id="step3" class="onboarding-step" style="display: none;">
+        <div class="onboarding-content">
+            <div class="onboarding-header">
+                <div class="step-counter">Step 3 of 4</div>
+                <h2>Application URL</h2>
+                <p>Configure your application's public URL (used for email links)</p>
+            </div>
+            <form id="urlSetupForm" class="onboarding-form">
+                <div class="form-group">
+                    <label for="appUrl">Application URL</label>
+                    <input type="url" id="appUrl" placeholder="https://your-domain.com" required>
+                    <small>Used for generating invitation and callback links in emails</small>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Continue to Next Step</button>
+            </form>
+            <button id="skipUrl" class="btn btn-secondary btn-block">Skip URL Configuration (Can use http://localhost:5500)</button>
+        </div>
+    </div>
+
+    <!-- Step 4: Create First Team -->
+    <div id="step4" class="onboarding-step" style="display: none;">
+        <div class="onboarding-content">
+            <div class="onboarding-header">
+                <div class="step-counter">Step 4 of 4</div>
+                <h2>Create Your First Team</h2>
+                <p>Set up your first team for managing Instagram accounts</p>
+            </div>
+            <form id="teamSetupForm" class="onboarding-form">
+                <div class="form-group">
+                    <label for="teamName">Team Name</label>
+                    <input type="text" id="teamName" placeholder="e.g., Marketing Team" required>
+                </div>
+                <div class="form-group">
+                    <label for="teamDescription">Team Description (Optional)</label>
+                    <textarea id="teamDescription" placeholder="Describe what this team does" rows="3"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Complete Setup & Login</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Completion Screen -->
+    <div id="completionScreen" class="onboarding-step" style="display: none;">
+        <div class="onboarding-content">
+            <div class="onboarding-header">
+                <h2>🎉 Setup Complete!</h2>
+                <p>Your PostWave instance is ready to use</p>
+            </div>
+            <div class="completion-info">
+                <p>Your super admin account has been created and your first team is ready.</p>
+                <p>You can now:</p>
+                <ul>
+                    <li>Invite team members via Settings → Teams</li>
+                    <li>Connect Instagram accounts for your team</li>
+                    <li>Create and schedule posts</li>
+                    <li>Set up post approval workflows</li>
+                </ul>
+                <button id="goToDashboard" class="btn btn-primary btn-block">Go to Dashboard</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.onboarding-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 20px;
+}
+
+.onboarding-step {
+    display: none;
+}
+
+.onboarding-step.active {
+    display: block;
+}
+
+.onboarding-content {
+    background: white;
+    border-radius: 12px;
+    padding: 40px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    max-width: 500px;
+    width: 100%;
+}
+
+.onboarding-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.step-counter {
+    font-size: 0.9rem;
+    color: #667eea;
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.onboarding-header h2 {
+    font-size: 1.8rem;
+    margin: 10px 0;
+    color: #333;
+}
+
+.onboarding-header p {
+    color: #666;
+    font-size: 0.95rem;
+    margin: 10px 0 0 0;
+}
+
+.onboarding-form {
+    margin-bottom: 20px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #333;
+    font-size: 0.95rem;
+}
+
+.form-group input[type="text"],
+.form-group input[type="email"],
+.form-group input[type="password"],
+.form-group input[type="url"],
+.form-group input[type="number"],
+.form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    transition: border-color 0.3s;
+}
+
+.form-group input[type="text"]:focus,
+.form-group input[type="email"]:focus,
+.form-group input[type="password"]:focus,
+.form-group input[type="url"]:focus,
+.form-group input[type="number"]:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.form-group input[type="checkbox"] {
+    margin-right: 8px;
+}
+
+.form-group small {
+    display: block;
+    margin-top: 8px;
+    color: #666;
+    font-size: 0.85rem;
+}
+
+.btn-block {
+    width: 100%;
+    margin-bottom: 10px;
+}
+
+.btn-secondary {
+    background: #f0f0f0;
+    color: #333;
+    border: 1px solid #ddd;
+}
+
+.btn-secondary:hover {
+    background: #e0e0e0;
+}
+
+.completion-info {
+    text-align: center;
+}
+
+.completion-info p {
+    font-size: 1rem;
+    color: #666;
+    margin: 15px 0;
+}
+
+.completion-info ul {
+    text-align: left;
+    display: inline-block;
+    margin: 20px 0;
+}
+
+.completion-info li {
+    margin: 10px 0;
+    color: #666;
+}
+</style>

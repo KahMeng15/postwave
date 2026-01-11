@@ -7,40 +7,71 @@
         </div>
         <form id="loginForm" class="auth-form">
             <div class="form-group">
-                <input type="text" id="loginUsername" placeholder="Username" required>
+                <input type="email" id="loginEmail" placeholder="Email" required>
             </div>
             <div class="form-group">
                 <input type="password" id="loginPassword" placeholder="Password" required>
             </div>
             <button type="submit" class="btn btn-primary btn-block">Login</button>
         </form>
-        <p class="auth-switch">
-            Don't have an account? <a href="#" id="showRegister">Register</a>
+        <p class="auth-info" style="text-align: center; color: #666; font-size: 0.9rem; margin-top: 1rem;">
+            <small>PostWave uses invite-only accounts. Contact your team administrator for an invitation.</small>
         </p>
     </div>
 </div>
-
-<!-- Register Page -->
-<div id="registerPage" class="auth-page" style="display: none;">
+<!-- Invitation Page - Step 1 -->
+<div id="invitationPage" class="auth-page" style="display: none;">
     <div class="auth-container">
         <div class="auth-header">
             <h1>PostWave</h1>
-            <p>Create your account</p>
+            <p id="invitationTeamName">Join a team</p>
         </div>
-        <form id="registerForm" class="auth-form">
+        
+        <!-- Step 2a: Create Account Form -->
+        <form id="createAccountForm" class="auth-form" style="display: none;">
             <div class="form-group">
-                <input type="text" id="registerUsername" placeholder="Username" required>
+                <label for="createEmail">Email</label>
+                <input type="email" id="createEmail" placeholder="Email" readonly>
             </div>
             <div class="form-group">
-                <input type="email" id="registerEmail" placeholder="Email" required>
+                <label for="createName">Full Name</label>
+                <input type="text" id="createName" placeholder="Your full name" required>
             </div>
             <div class="form-group">
-                <input type="password" id="registerPassword" placeholder="Password" required>
+                <label for="createPassword">Password</label>
+                <input type="password" id="createPassword" placeholder="Create a password" required>
             </div>
-            <button type="submit" class="btn btn-primary btn-block">Register</button>
+            <div class="form-group">
+                <label for="createPasswordConfirm">Confirm Password</label>
+                <input type="password" id="createPasswordConfirm" placeholder="Confirm password" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Create Account</button>
         </form>
-        <p class="auth-switch">
-            Already have an account? <a href="#" id="showLogin">Login</a>
+        
+        <!-- Step 2b: Login Form -->
+        <form id="invitationLoginForm" class="auth-form" style="display: none;">
+            <p style="color: #666; margin-bottom: 1rem; font-size: 0.9rem;">
+                Please log in to join <span id="loginTeamName"></span>.
+            </p>
+            <div class="form-group">
+                <label for="invitationLoginEmail">Email</label>
+                <input type="email" id="invitationLoginEmail" placeholder="Email" readonly>
+            </div>
+            <div class="form-group">
+                <label for="invitationLoginPassword">Password</label>
+                <input type="password" id="invitationLoginPassword" placeholder="Password" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Login & Join Team</button>
+        </form>
+        
+        <!-- Acceptance buttons -->
+        <div id="step1Buttons" style="display: flex; gap: 1rem; margin-top: 1rem;">
+            <button id="acceptInvitationBtn" class="btn btn-primary btn-block">Accept Invitation</button>
+            <button id="declineInvitationBtn" class="btn btn-secondary btn-block" style="background-color: #e0e0e0; color: #333;">Decline</button>
+        </div>
+        
+        <p class="auth-info" style="text-align: center; color: #999; font-size: 0.8rem; margin-top: 1rem;">
+            <small id="invitationExpiry"></small>
         </p>
     </div>
 </div>

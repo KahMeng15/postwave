@@ -61,6 +61,21 @@ def create_app(config_class=Config):
     app.register_blueprint(instagram_bp, url_prefix='/api/instagram')
     app.register_blueprint(users_bp, url_prefix='/api/users')
     
+    # Register new team and posts approval blueprints
+    from routes.teams import teams_bp
+    from routes.posts_approval import posts_bp as posts_approval_bp
+    from routes.settings import settings_bp
+    from routes.admin_settings import admin_settings_bp
+    from routes.team_settings import team_settings_bp
+    from routes.user_settings import user_settings_bp
+    
+    app.register_blueprint(teams_bp, url_prefix='/api/teams')
+    app.register_blueprint(posts_approval_bp, url_prefix='/api/posts-approval', name='posts_approval')
+    app.register_blueprint(settings_bp, url_prefix='/api/settings')
+    app.register_blueprint(admin_settings_bp)
+    app.register_blueprint(team_settings_bp)
+    app.register_blueprint(user_settings_bp)
+    
     # Store app instance for scheduler to use
     scheduler_app = app
     
@@ -98,6 +113,24 @@ def create_app(config_class=Config):
     # Create database tables
     with app.app_context():
         db.create_all()
+    
+    # Add cache control headers for static files to prevent stale caching
+    @app.after_request
+    def add_cache_headers(response):
+        # Don't cache JavaScript and CSS files aggressively
+        if request.path.endswith(('.js', '.css')):
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+        # Allow caching for images
+        elif request.path.endswith(('.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg')):
+            response.headers['Cache-Control'] = 'public, max-age=86400'  # 1 day
+        # Don't cache HTML files
+        elif request.path.endswith('.html') or request.path == '/' or '.' not in request.path:
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+        return response
     
     # Error handlers
     @app.errorhandler(404)

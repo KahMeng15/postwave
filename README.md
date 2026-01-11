@@ -1,15 +1,24 @@
-# IG Scheduler
+# PostWave
 
-Production-ready web application for scheduling Instagram posts with multi-user support. Built with Python Flask and vanilla JavaScript.
+Production-ready web application for scheduling Instagram posts with team collaboration and role-based access control. Built with Python Flask and vanilla JavaScript.
+
+**📚 Full Documentation**: See [DOCUMENTATION.md](DOCUMENTATION.md) for complete setup guide, API reference, architecture, and troubleshooting.
 
 ## Features
 
 - 🔐 Multi-user authentication with JWT
-- 📱 Instagram Business API integration
+- 👥 **Team management with role-based access**
+  - Owner: Full team control
+  - Manager: Team management and post approval
+  - Member: Create and schedule posts
+  - Viewer: Read-only access
+- 📱 Instagram Business API integration (per-team credentials)
 - 📅 Automated post scheduling with background tasks
-- 🖼️ Multi-image posts (up to 10 photos per post)
-- 👁️ Live preview before publishing
+- ✅ **Post approval workflow** (optional per team member)
+- 🖼️ Multi-image carousel posts (1-20 images)
+- 👁️ Live Instagram preview before publishing
 - 📊 Dashboard with post statistics
+- 💌 **Email invitations** for team collaboration
 - 🌙 Dark mode toggle
 - 🎯 Drag & drop file upload
 - ⌨️ Keyboard shortcuts (Ctrl/Cmd + N/D/P/S, ESC)
@@ -49,7 +58,7 @@ cp .env.example .env
 # Run the app
 python app.py
 
-# Open http://localhost:5000
+# Open http://localhost:5500
 ```
 
 ## Setup & Configuration
@@ -72,16 +81,25 @@ SECRET_KEY=<generate-with: openssl rand -hex 32>
 JWT_SECRET_KEY=<generate-with: openssl rand -hex 32>
 
 # Database
-DATABASE_URL=sqlite:///scheduler.db
+DATABASE_URL=sqlite:///postwave.db
 
 # Instagram API
 INSTAGRAM_APP_ID=your-app-id
 INSTAGRAM_APP_SECRET=your-app-secret
-INSTAGRAM_API_VERSION=v24.0
+INSTAGRAM_API_VERSION=v19.0
+
+# Email/SMTP Configuration (for team invitations)
+MAIL_SERVER=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USE_TLS=true
+MAIL_USERNAME=your-email@gmail.com
+MAIL_PASSWORD=your-app-password
+MAIL_FROM_EMAIL=noreply@postwave.com
+MAIL_FROM_NAME=PostWave
 
 # Server
 HOST=0.0.0.0
-PORT=5000
+PORT=5500
 
 # File Upload
 MAX_CONTENT_LENGTH=52428800  # 50MB
@@ -136,11 +154,115 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ## First-Time Setup
 
-1. **Open application**: http://localhost:5000
-2. **Register account**: Click "Register" and create your admin account
-3. **Login**: Use your credentials
-4. **Connect Instagram**: Go to Settings and configure your Instagram Business Account
-5. **Create post**: Click "New Post" to start scheduling
+On first launch, PostWave displays an interactive 4-step onboarding wizard:
+
+### Step 1: Super Admin Registration
+Create your super admin account (the master administrator for the entire PostWave instance)
+- Username
+- Email  
+- Password
+
+### Step 2: SMTP Configuration (Optional)
+Configure email settings for sending team member invitations:
+- Mail Server (e.g., `smtp.gmail.com`)
+- Port (e.g., `587`)
+- Use TLS (recommended for Gmail)
+- Email credentials
+- From email and name
+
+**Skip option**: Can configure email later in Settings → Email Configuration
+
+### Step 3: Application URL (Optional)
+Set your application's public URL used in email invitation links:
+- Full URL including protocol (e.g., `https://postwave.your-domain.com`)
+
+**Skip option**: Defaults to `http://localhost:5500` for local development
+
+### Step 4: Create First Team
+Create your initial team for managing Instagram accounts:
+- Team Name
+- Team Description (optional)
+
+After setup completes, you'll be logged in and can:
+- Access the dashboard
+- Create additional teams
+- Invite team members
+
+### Account Access Model
+
+**PostWave uses invite-only accounts:**
+- No public registration available
+- All accounts created via team invitations (after first setup)
+- Super admin creates teams and invites members
+- Members join via email invitation link
+- Settings and configurations managed by super admin in Settings page
+
+### Team Roles & Permissions
+
+**Super Admin**
+- Create and manage teams
+- View and control all teams
+- Edit, approve, or reject posts from any team
+- Manage all users and settings
+- Configure email and application settings
+
+**Team Leader**
+- Manage assigned teams
+- Manage team members (invite, remove, set permissions)
+- Configure team's Instagram API credentials
+- Approve or reject member posts
+- Create and schedule posts
+
+**Team Member**
+- Create draft posts
+- Schedule posts (if enabled)
+- View team posts
+- Submit posts for approval (if required)
+
+### Email Configuration
+
+For team member invitations to work, configure your SMTP server in Settings → Email Configuration:
+
+```env
+# Gmail Example
+MAIL_SERVER=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USE_TLS=true
+MAIL_USERNAME=your-email@gmail.com
+MAIL_PASSWORD=your-app-password  # Use App Password for Gmail
+MAIL_FROM_EMAIL=noreply@postwave.com
+MAIL_FROM_NAME=PostWave
+```
+
+**Gmail Setup:**
+1. Enable 2-Factor Authentication
+2. Generate App Password: https://myaccount.google.com/apppasswords
+3. Use the 16-character app password in `MAIL_PASSWORD`
+
+3. Use the 16-character app password in `MAIL_PASSWORD`
+
+### Application Settings
+
+Instead of editing `.env` files, super admins can manage all email and server settings directly from the dashboard:
+
+1. **Access Settings:**
+   - Click your username in the top-right corner
+   - Select "Settings"
+
+2. **Available Settings:**
+   - **Email Configuration** - SMTP server, port, TLS, credentials, from address
+   - **Server Configuration** - Public URL for media access
+
+3. **Features:**
+   - Settings are stored in the database
+   - Environment variables are used as fallback for initialization
+   - Settings changes take effect immediately
+   - Reset to environment values if needed
+
+4. **Security:**
+   - Only super admins can access settings
+   - Password fields are masked in the UI
+   - Database encryption recommended for production
 
 ## Using the App
 
@@ -190,20 +312,36 @@ igscheduler/
 ### Authentication
 - `POST /api/auth/register` - Register new user
 - `POST /api/auth/login` - Login and get JWT token
-- `POST /api/auth/logout` - Logout
+- `POST /api/auth/refresh` - Refresh access token
+- `GET /api/auth/me` - Get current user info
+
+### Teams
+- `POST /api/teams/setup-admin` - Initialize first super admin
+- `GET /api/teams/teams` - List user's teams
+- `POST /api/teams/teams` - Create new team
+- `GET /api/teams/teams/<id>` - Get team details
+- `PUT /api/teams/teams/<id>` - Update team
+- `GET /api/teams/teams/<id>/members` - List team members
+- `PUT /api/teams/teams/<id>/members/<uid>` - Update member permissions
+- `DELETE /api/teams/teams/<id>/members/<uid>` - Remove team member
+- `POST /api/teams/invite` - Invite user to team
+- `POST /api/teams/accept-invite/<token>` - Accept invitation
 
 ### Posts
-- `GET /api/posts` - List all posts
+- `GET /api/posts` - List user posts
 - `POST /api/posts` - Create new post
 - `GET /api/posts/<id>` - Get post details
 - `PUT /api/posts/<id>` - Update post
 - `DELETE /api/posts/<id>` - Delete post
+- `GET /api/posts-approval/team/<id>/posts` - List team posts
+- `POST /api/posts-approval/posts/<id>/send-approval` - Send for approval
+- `POST /api/posts-approval/posts/<id>/approve` - Approve post (leader only)
+- `POST /api/posts-approval/posts/<id>/reject` - Reject post (leader only)
 
 ### Instagram Connection
-- `GET /api/instagram/status` - Check connection status
-- `POST /api/instagram/connect` - Connect Instagram account
-- `POST /api/instagram/disconnect` - Disconnect Instagram account
-- `POST /api/instagram/publish/<id>` - Publish scheduled post
+- `POST /api/instagram/connect` - Connect team's Instagram account
+- `POST /api/instagram/fetch-profile-picture` - Cache profile picture
+- `GET /api/instagram/media` - Get team's media list
 
 ### Users
 - `GET /api/users/profile` - Get user profile
@@ -329,6 +467,23 @@ docker-compose ps
 - Image size: Auto-optimized to 8MB, 1080px
 
 ## Changelog
+
+### v2.0 (January 2026)
+- **Team Management System**
+  - Multi-team support with separate Instagram API credentials per team
+  - Role-based access control (Super Admin, Team Leader, Team Member)
+  - Email-based team invitations with 7-day expiration
+  - Team member permission management
+- **Post Approval Workflow**
+  - Optional post approval requirement per team member
+  - Team leader approval/rejection interface
+  - Post history tracking
+- **Email Integration**
+  - SMTP-based email invitations
+  - Configurable email settings
+- **Profile Picture Caching**
+  - Instagram profile pictures cached locally
+  - Auto-refresh on profile updates
 
 ### v1.1 (December 2024)
 - Added dark mode with persistent preference

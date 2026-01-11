@@ -1,68 +1,610 @@
-<!-- Settings View -->
-<div id="settingsView" class="container">
-    <div class="view-header">
-        <h1>Settings</h1>
-    </div>
-    
-    <div class="card">
-        <div class="card-header">
-            <h2>Instagram API Configuration</h2>
+<!-- Settings View with 3 Tabs: User, Team, Admin -->
+<div id="settings-view" class="container">
+    <style>
+        #settings-view {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0;
+        }
+        
+        .settings-wrapper {
+            display: flex;
+            gap: 0;
+            min-height: 600px;
+        }
+        
+        .settings-sidebar {
+            width: 200px;
+            background: var(--surface);
+            border-right: 1px solid var(--border-color);
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .settings-sidebar h3 {
+            padding: 15px;
+            margin: 0;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .settings-tab-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .settings-tab-btn {
+            background: none;
+            border: none;
+            padding: 12px 15px;
+            text-align: left;
+            cursor: pointer;
+            color: var(--text-secondary);
+            border-left: 3px solid transparent;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        
+        .settings-tab-btn:hover {
+            background: var(--background);
+            color: var(--text-primary);
+        }
+        
+        .settings-tab-btn.active {
+            background: var(--primary-color);
+            color: white;
+            border-left-color: var(--primary-color);
+        }
+        
+        .settings-content {
+            flex: 1;
+            padding: 30px;
+            background: var(--background);
+            overflow-y: auto;
+        }
+        
+        .settings-header {
+            margin-bottom: 30px;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 15px;
+        }
+        
+        .settings-header h2 {
+            margin: 0;
+            color: var(--text-primary);
+            font-size: 1.8rem;
+        }
+        
+        .settings-header p {
+            margin: 5px 0 0 0;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+        
+        .settings-section {
+            margin-bottom: 30px;
+        }
+        
+        .settings-section h3 {
+            color: var(--text-primary);
+            margin: 0 0 15px 0;
+            font-size: 1.1rem;
+        }
+        
+        .settings-grid {
+            display: grid;
+            gap: 15px;
+        }
+        
+        .setting-item {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .setting-item label {
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+        }
+        
+        .setting-item input,
+        .setting-item select,
+        .setting-item textarea {
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text-primary);
+            font-family: inherit;
+        }
+        
+        .setting-item input:focus,
+        .setting-item select:focus,
+        .setting-item textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+        }
+        
+        .setting-description {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .btn-primary {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: var(--surface);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        
+        .btn-secondary:hover {
+            background: var(--background);
+        }
+        
+        .btn-danger {
+            background: #EF4444;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #DC2626;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .table-container {
+            overflow-x: auto;
+            margin-top: 15px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            background: var(--surface);
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--border-color);
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+        
+        tr:hover {
+            background: rgba(0, 123, 255, 0.05);
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .status-active {
+            background: #D1FAE5;
+            color: #065F46;
+        }
+        
+        .status-inactive {
+            background: #FEE2E2;
+            color: #7F1D1D;
+        }
+        
+        .role-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            background: rgba(0, 123, 255, 0.1);
+            color: var(--primary-color);
+        }
+        
+        .action-buttons-small {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .action-buttons-small button {
+            padding: 6px 12px;
+            font-size: 0.85rem;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .form-col {
+            flex: 1;
+        }
+        
+        .empty-state {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+        
+        @media (max-width: 768px) {
+            .settings-wrapper {
+                flex-direction: column;
+            }
+            
+            .settings-sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            }
+            
+            .settings-content {
+                padding: 20px;
+            }
+            
+            .form-row {
+                flex-direction: column;
+            }
+        }
+    </style>
+
+    <div class="settings-wrapper">
+        <!-- Sidebar Navigation -->
+        <div class="settings-sidebar">
+            <h3>Settings</h3>
+            <div class="settings-tab-group" id="settingsTabs">
+                <button class="settings-tab-btn active" data-tab="user-settings">
+                    User Settings
+                </button>
+                <button class="settings-tab-btn" data-tab="team-settings" style="display: none;" id="teamSettingsTab">
+                    Team Settings
+                </button>
+                <button class="settings-tab-btn" data-tab="admin-settings" style="display: none;" id="adminSettingsTab">
+                    Admin Settings
+                </button>
+            </div>
         </div>
-        <div class="card-body">
-            <form id="instagramConfigForm">
-                <div class="info-box" style="margin-bottom: 1rem;">
-                    <strong>📖 How to find your Instagram Business Account ID:</strong>
-                    <ol style="margin: 0.5rem 0 0 0; padding-left: 1.5rem;">
-                        <li>Generate an access token from <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a></li>
-                        <li>When authorizing, look at the Instagram selection screen</li>
-                        <li>The number below your Instagram username is your Account ID</li>
-                        <li>Or use Graph API to query: <code>me/accounts?fields=instagram_business_account</code></li>
-                    </ol>
+
+        <!-- Content Area -->
+        <div class="settings-content">
+            <!-- User Settings Tab -->
+            <div id="user-settings" class="tab-content active">
+                <div class="settings-header">
+                    <h2>User Settings</h2>
+                    <p>Manage your personal account settings</p>
                 </div>
-                <div class="form-group">
-                    <label>Access Token *</label>
-                    <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
-                        <div style="flex: 1;">
-                            <input type="text" id="accessToken" placeholder="EAAMDbXJTTtMBO..." required>
-                            <small class="text-muted">From: <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a> (select your app, generate token)</small>
+                
+                <div class="settings-section">
+                    <h3>Profile Information</h3>
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label>Display Name</label>
+                            <input type="text" id="userNameInput" placeholder="Your name">
+                            <div class="setting-description">The name displayed across the application</div>
                         </div>
-                        <button type="button" id="fetchAccountIdBtn" class="btn btn-secondary" style="margin-top: 0.5rem; white-space: nowrap;">
-                            <span id="fetchBtnText">🔍 Fetch</span>
-                            <span id="fetchBtnSpinner" style="display: none;">⏳</span>
-                        </button>
+                        <div class="button-group">
+                            <button class="btn-primary" id="saveName">Save Name</button>
+                        </div>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Instagram Business Account ID *</label>
-                    <input type="text" id="instagramAccountId" placeholder="17841478208100000">
-                    <small class="text-muted">The numeric ID shown below your Instagram username during authorization</small>
+                
+                <div class="settings-section">
+                    <h3>Email & Password</h3>
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label>Email Address</label>
+                            <input type="email" id="userEmailInput" placeholder="your@email.com" readonly style="opacity: 0.7;">
+                            <div class="setting-description">Your login email address</div>
+                        </div>
+                        <div class="setting-item">
+                            <label>Current Password (required for changes)</label>
+                            <input type="password" id="currentPassword" placeholder="Enter current password">
+                            <div class="setting-description">Required to change email or password</div>
+                        </div>
+                        <div class="button-group">
+                            <button class="btn-primary" id="saveEmail">Update Email</button>
+                        </div>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Facebook Page ID (Alternative)</label>
-                    <input type="text" id="pageId" placeholder="103179312668000">
-                    <small class="text-muted">Only needed if you don't have the Instagram Account ID above</small>
+                
+                <div class="settings-section">
+                    <h3>Change Password</h3>
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label>Current Password</label>
+                            <input type="password" id="passwordCurrentInput" placeholder="Enter current password">
+                        </div>
+                        <div class="setting-item">
+                            <label>New Password</label>
+                            <input type="password" id="passwordNewInput" placeholder="Enter new password">
+                            <div class="setting-description">Minimum 8 characters</div>
+                        </div>
+                        <div class="setting-item">
+                            <label>Confirm Password</label>
+                            <input type="password" id="passwordConfirmInput" placeholder="Confirm new password">
+                        </div>
+                        <div class="button-group">
+                            <button class="btn-primary" id="savePassword">Update Password</button>
+                        </div>
+                    </div>
                 </div>
-                <button type="submit" class="btn btn-primary">Save & Connect</button>
-            </form>
-        </div>
-    </div>
-    
-    <div class="card">
-        <div class="card-header">
-            <h2>Account Settings</h2>
-        </div>
-        <div class="card-body">
-            <form id="changePasswordForm">
-                <div class="form-group">
-                    <label>Current Password</label>
-                    <input type="password" id="oldPassword" required>
+                
+                <div class="settings-section">
+                    <h3>Your Activity Logs</h3>
+                    <div class="setting-item">
+                        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                            <input type="text" id="userLogsSearch" placeholder="Search activity..." style="flex: 1;">
+                            <button class="btn-secondary" id="userLogsRefresh">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="userLogsContainer" class="table-container"></div>
                 </div>
-                <div class="form-group">
-                    <label>New Password</label>
-                    <input type="password" id="newPassword" required>
+            </div>
+
+            <!-- Team Settings Tab -->
+            <div id="team-settings" class="tab-content">
+                <div class="settings-header">
+                    <h2>Team Settings</h2>
+                    <p>Manage your team configuration and members</p>
                 </div>
-                <button type="submit" class="btn btn-primary">Change Password</button>
-            </form>
+                
+                <div class="settings-section">
+                    <h3>Team Information</h3>
+                    <div id="teamInfoDisplay">
+                        <div class="setting-item">
+                            <div><strong id="teamName">-</strong></div>
+                            <div id="teamDescription" style="color: var(--text-secondary); margin-top: 5px;">-</div>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <button class="btn-secondary" id="editTeamInfoBtn">Edit Team Info</button>
+                        </div>
+                    </div>
+                    <div id="teamInfoEdit" style="display: none;">
+                        <div class="setting-item">
+                            <label>Team Name</label>
+                            <input type="text" id="teamNameInput" placeholder="Enter team name">
+                        </div>
+                        <div class="setting-item">
+                            <label>Team Description</label>
+                            <textarea id="teamDescriptionInput" placeholder="Enter team description" style="min-height: 100px;"></textarea>
+                        </div>
+                        <div class="button-group">
+                            <button class="btn-primary" id="saveTeamInfoBtn">Save Changes</button>
+                            <button class="btn-secondary" id="cancelTeamInfoBtn">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Instagram Connection</h3>
+                    <div id="teamInstagramStatus"></div>
+                    <div id="teamInstagramForm" style="display: none;">
+                        <div class="setting-item">
+                            <label>Access Token</label>
+                            <input type="password" id="teamInstagramToken" placeholder="Enter Instagram access token">
+                            <div class="setting-description">Get your access token from Instagram Graph API</div>
+                        </div>
+                        <div class="setting-item">
+                            <label>Instagram Account ID (Optional)</label>
+                            <input type="text" id="teamInstagramAccountId" placeholder="e.g., 17841400988888888">
+                            <div class="setting-description">Leave blank to auto-detect from access token</div>
+                        </div>
+                        <div class="button-group">
+                            <button class="btn-primary" id="connectTeamInstagramBtn">Connect Instagram</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Add Team Member</h3>
+                    <div class="setting-item">
+                        <label>Member Email</label>
+                        <input type="email" id="inviteMemberEmail" placeholder="Enter member email address">
+                        <div class="setting-description">An invitation will be sent to this email address</div>
+                    </div>
+                    <div class="button-group">
+                        <button class="btn-primary" id="inviteMemberBtn">Send Invite</button>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Team Members</h3>
+                    <div id="teamMembersContainer" class="table-container"></div>
+                </div>
+                
+                <div class="settings-section" data-section="invitations">
+                    <h3>Pending Invitations</h3>
+                    <div id="teamInvitationsContainer" class="table-container"></div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Team Activity Logs</h3>
+                    <div class="setting-item">
+                        <div style="display: flex; gap: 10px;">
+                            <input type="text" id="teamLogsSearch" placeholder="Search activity..." style="flex: 1;">
+                            <select id="teamLogsFilter" style="min-width: 150px;">
+                                <option value="">All Actions</option>
+                                <option value="api_call">API Calls</option>
+                                <option value="member_added">Member Added</option>
+                                <option value="member_updated">Member Updated</option>
+                                <option value="member_removed">Member Removed</option>
+                                <option value="config_changed">Config Changed</option>
+                                <option value="post_scheduled">Post Scheduled</option>
+                            </select>
+                            <button class="btn-secondary" id="teamLogsRefresh">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="teamLogsContainer" class="table-container"></div>
+                </div>
+            </div>
+
+            <!-- Admin Settings Tab -->
+            <div id="admin-settings" class="tab-content">
+                <div class="settings-header">
+                    <h2>Admin Settings</h2>
+                    <p>System administration and configuration</p>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Application Settings</h3>
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label>Application Domain</label>
+                            <input type="url" id="appDomainInput" placeholder="https://example.com">
+                            <div class="setting-description">Used for email links and redirects</div>
+                        </div>
+                        <div class="button-group">
+                            <button class="btn-primary" id="saveDomainBtn">Save Domain</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Email/SMTP Configuration</h3>
+                    <div class="setting-item">
+                        <label>Mail Server</label>
+                        <input type="text" id="mailServer" placeholder="e.g., smtp.gmail.com">
+                    </div>
+                    <div class="setting-item">
+                        <label>Mail Port</label>
+                        <input type="number" id="mailPort" placeholder="587" value="587">
+                    </div>
+                    <div class="setting-item">
+                        <label>
+                            <input type="checkbox" id="mailUseTLS">
+                            Use TLS
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label>Mail Username</label>
+                        <input type="text" id="mailUsername" placeholder="e.g., your-email@gmail.com">
+                    </div>
+                    <div class="setting-item">
+                        <label>Mail Password</label>
+                        <input type="password" id="mailPassword" placeholder="Your SMTP password">
+                    </div>
+                    <div class="setting-item">
+                        <label>From Email</label>
+                        <input type="email" id="mailFromEmail" placeholder="noreply@postwave.com">
+                    </div>
+                    <div class="setting-item">
+                        <label>From Name</label>
+                        <input type="text" id="mailFromName" placeholder="PostWave">
+                    </div>
+                    <div class="setting-item" style="color: #666; font-size: 0.9em; margin-top: 10px;">
+                        <strong>Note:</strong> Mail password is securely stored in the database.
+                    </div>
+                    <div class="button-group" style="margin-top: 15px;">
+                        <button class="btn-primary" id="saveEmailSettingsBtn">Save Email Settings</button>
+                        <button class="btn-secondary" id="testEmailBtn">Send Test Email</button>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>User Management</h3>
+                    <div class="setting-item">
+                        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                            <input type="text" id="usersSearch" placeholder="Search users..." style="flex: 1;">
+                            <button class="btn-secondary" id="usersRefresh">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="adminUsersContainer" class="table-container"></div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Team Management</h3>
+                    <div class="setting-item">
+                        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                            <input type="text" id="teamsSearch" placeholder="Search teams..." style="flex: 1;">
+                            <button class="btn-primary" id="createTeamBtn">Create Team</button>
+                            <button class="btn-secondary" id="teamsRefresh">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="adminTeamsContainer" class="table-container"></div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
+
+<!-- Role Change Modal -->
+<div id="roleChangeModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 400px; width: 90%;">
+        <h2 style="margin: 0 0 20px 0; font-size: 1.5rem;">Change User Role</h2>
+        <p id="roleChangeUserInfo" style="margin: 0 0 20px 0; color: #666;"></p>
+        
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
+            <button class="role-option-btn" onclick="confirmRoleChange('manager')" style="padding: 12px; border: 2px solid var(--border-color); border-radius: 6px; background: white; cursor: pointer; text-align: left; font-weight: 500;">
+                <strong>Manager</strong>
+                <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">Full access to team settings and management</div>
+            </button>
+            <button class="role-option-btn" onclick="confirmRoleChange('member')" style="padding: 12px; border: 2px solid var(--border-color); border-radius: 6px; background: white; cursor: pointer; text-align: left; font-weight: 500;">
+                <strong>Member</strong>
+                <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">Can schedule posts and manage content</div>
+            </button>
+            <button class="role-option-btn" onclick="confirmRoleChange('viewer')" style="padding: 12px; border: 2px solid var(--border-color); border-radius: 6px; background: white; cursor: pointer; text-align: left; font-weight: 500;">
+                <strong>Viewer</strong>
+                <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">Read-only access to team content</div>
+            </button>
+        </div>
+        
+        <div style="display: flex; gap: 10px;">
+            <button onclick="closeRoleChangeModal()" style="flex: 1; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background: white; cursor: pointer;">Cancel</button>
+        </div>
+    </div>
+</div>
+<script>
+// All settings functions are now in app.js
+// This page is loaded via showView() and initialized via settingsViewInit()
+</script>

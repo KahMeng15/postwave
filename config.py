@@ -32,3 +32,12 @@ class Config:
     # Server
     HOST = os.getenv('HOST', '0.0.0.0')
     PORT = int(os.getenv('PORT', 5500))
+    
+    # Email/SMTP Configuration
+    MAIL_SERVER = os.getenv('MAIL_SERVER', '')
+    MAIL_PORT = int(os.getenv('MAIL_PORT', 587))
+    MAIL_USE_TLS = os.getenv('MAIL_USE_TLS', 'true').lower() == 'true'
+    MAIL_USERNAME = os.getenv('MAIL_USERNAME', '')
+    MAIL_PASSWORD = os.getenv('MAIL_PASSWORD', '')
+    MAIL_FROM_EMAIL = os.getenv('MAIL_FROM_EMAIL', 'noreply@postwave.com')
+    MAIL_FROM_NAME = os.getenv('MAIL_FROM_NAME', 'PostWave')
