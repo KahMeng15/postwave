@@ -18,7 +18,7 @@ COPY . .
 RUN mkdir -p uploads
 
 # Expose port
-EXPOSE 5000
+EXPOSE 5500
 
 # Set environment variables
 ENV FLASK_ENV=production
