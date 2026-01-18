@@ -10,6 +10,7 @@ let currentTheme = localStorage.getItem('theme') || 'light';
 let navbarListenersSetup = false; // Track if navbar listeners are already set up
 let calendarWeekOffset = 0; // Track which week is being displayed (0 = current week)
 let calendarInitialized = false; // Track if calendar has been initialized for this view
+let calendarRenderToken = 0; // Track latest calendar render to avoid duplicate async renders
 let currentCarouselIndex = 0; // Track current image in carousel
 let selectedAspectRatio = 'original'; // ASPECT RATIO FEATURE DISABLED - Defaulted to 'original'
 let draggedItemIndex = null; // Track dragged item during reordering
@@ -503,9 +504,11 @@ function setupViewListeners() {
         // Posts view
         const newPostForm = document.getElementById('newPostForm');
         const saveDraftBtn = document.getElementById('saveDraft');
+        const postNowBtn = document.getElementById('postNow');
         
         if (newPostForm) newPostForm.addEventListener('submit', handleCreatePost);
         if (saveDraftBtn) saveDraftBtn.addEventListener('click', () => handleCreatePost(null, 'draft'));
+        if (postNowBtn) postNowBtn.addEventListener('click', () => handleCreatePost(null, 'scheduled', true));
         
         // Update profile picture preview when view is shown
         updateProfilePicturePreview();
@@ -638,9 +641,11 @@ function setupEventListeners() {
     // Posts
     const newPostForm = document.getElementById('newPostForm');
     const saveDraftBtn = document.getElementById('saveDraft');
+    const postNowBtn = document.getElementById('postNow');
     
     if (newPostForm) newPostForm.addEventListener('submit', handleCreatePost);
     if (saveDraftBtn) saveDraftBtn.addEventListener('click', () => handleCreatePost(null, 'draft'));
+    if (postNowBtn) postNowBtn.addEventListener('click', () => handleCreatePost(null, 'scheduled', true));
     
     // Drag and drop
     if (document.getElementById('dropZone')) setupDragAndDrop();
@@ -3157,6 +3162,16 @@ async function loadAllPosts() {
                                 <button class="btn btn-sm btn-secondary" onclick="viewPost(${post.id})">
                                     View
                                 </button>
+                                ${(post.status === 'scheduled' || post.status === 'draft' || post.status === 'failed') ? `
+                                    <button class="btn btn-sm btn-primary" onclick="editPost(${post.id})">
+                                        Edit
+                                    </button>
+                                ` : ''}
+                                ${(post.status === 'scheduled' || post.status === 'failed') ? `
+                                    <button class="btn btn-sm btn-success" onclick="postNow(${post.id})">
+                                        Post Now
+                                    </button>
+                                ` : ''}
                                 ${post.status !== 'published' ? `
                                     <button class="btn btn-sm btn-danger" onclick="deletePost(${post.id})">
                                         Delete
@@ -3256,6 +3271,33 @@ async function deletePost(postId) {
         }
     } catch (error) {
         showToast('Failed to delete post', 'error');
+    }
+}
+
+async function editPost(postId) {
+    // Navigate to newPost view with edit mode
+    navigateTo(`/newPost?edit=${postId}`);
+}
+
+async function postNow(postId) {
+    if (!confirm('Publish this post immediately?')) return;
+    try {
+        const response = await apiCall(`/posts/${postId}/publish`, { method: 'POST' });
+        const data = await response.json();
+        if (response.ok) {
+            showToast('Post published successfully!', 'success');
+            setTimeout(() => {
+                loadPosts();
+                loadDashboard();
+            }, 1000);
+        } else {
+            const errorMessage = data.error || 'Failed to publish post';
+            console.error('Publish error:', errorMessage);
+            showToast(errorMessage, 'error');
+        }
+    } catch (error) {
+        console.error('Publish error:', error);
+        showToast('Error: Failed to publish post. Please try again.', 'error');
     }
 }
 
@@ -3485,108 +3527,141 @@ function displayMediaPreview() {
         divs[index] = div;
     });
     
-    // Now load images and populate in correct order
+    // Now load previews in correct order
     selectedFiles.forEach((file, index) => {
+        const div = divs[index];
+        if (!div) return;
+
+        const isExisting = file && file.isExisting;
+        const isVideo = file && file.type && file.type.startsWith('video');
+
+        // Helper to render controls markup
+        const controlsHtml = `
+            <button type="button" class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
+            <div class="media-reorder-controls">
+                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaToFirst(${index})" ${index === 0 ? 'disabled' : ''} title="Move to first">⏮</button>
+                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaUp(${index})" ${index === 0 ? 'disabled' : ''} title="Move left">←</button>
+                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaDown(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move right">→</button>
+                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaToLast(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move to last">⏭</button>
+            </div>
+        `;
+
+        // Existing media: render directly without FileReader
+        if (isExisting && file.url) {
+            if (isVideo) {
+                div.innerHTML = `
+                    <video src="${file.url}" class="media-preview-image" controls playsinline></video>
+                    ${controlsHtml}
+                `;
+            } else {
+                div.innerHTML = `
+                    <img src="${file.url}" alt="Preview ${index + 1}">
+                    ${controlsHtml}
+                `;
+            }
+            return;
+        }
+
+        // Videos from new uploads: use object URL
+        if (isVideo) {
+            const videoUrl = URL.createObjectURL(file);
+            div.innerHTML = `
+                <video src="${videoUrl}" class="media-preview-image" controls playsinline></video>
+                ${controlsHtml}
+            `;
+            return;
+        }
+
+        // Images from new uploads: use FileReader and optional crop
         const reader = new FileReader();
         reader.onload = (e) => {
-            const div = divs[index];
-            if (div) {
-                const img = new Image();
-                img.onload = () => {
-                    // Create canvas for cropped preview if crop data exists
-                    if (cropData[index] && cropData[index].cropped) {
-                        const canvas = document.createElement('canvas');
-                        const ctx = canvas.getContext('2d');
-                        
-                        // Get current aspect ratio from dropdown
-                        let aspectRatio = document.getElementById('aspectRatio').value;
-                        if (aspectRatio === 'custom') {
-                            const customRatio = document.getElementById('customAspectRatio').value;
-                            aspectRatio = customRatio || '1:1';
-                        }
-                        
-                        // Parse target aspect ratio
-                        let targetRatio;
-                        if (aspectRatio === 'original') {
-                            targetRatio = img.width / img.height;
-                        } else if (aspectRatio.includes(':')) {
-                            const [w, h] = aspectRatio.split(':').map(parseFloat);
-                            targetRatio = w / h;
-                        } else {
-                            targetRatio = parseFloat(aspectRatio);
-                        }
-                        
-                        // Get stored center point
-                        const centerX = cropData[index].centerX;
-                        const centerY = cropData[index].centerY;
-                        
-                        // Calculate box dimensions based on current aspect ratio
-                        // Try to keep the stored size, but adjust to match current aspect ratio
-                        let boxWidth, boxHeight;
-                        const storedBoxWidth = cropData[index].boxWidth;
-                        const storedBoxHeight = cropData[index].boxHeight;
-                        
-                        // Try to maximize crop area while maintaining aspect ratio
-                        const possibleWidthFromHeight = storedBoxHeight * targetRatio;
-                        const possibleHeightFromWidth = storedBoxWidth / targetRatio;
-                        
-                        if (possibleWidthFromHeight <= img.width) {
-                            boxWidth = possibleWidthFromHeight;
-                            boxHeight = storedBoxHeight;
-                        } else if (possibleHeightFromWidth <= img.height) {
-                            boxWidth = storedBoxWidth;
-                            boxHeight = possibleHeightFromWidth;
-                        } else {
-                            // Scale down
-                            if (storedBoxWidth / img.width > storedBoxHeight / img.height) {
-                                boxWidth = storedBoxWidth;
-                                boxHeight = boxWidth / targetRatio;
-                            } else {
-                                boxHeight = storedBoxHeight;
-                                boxWidth = boxHeight * targetRatio;
-                            }
-                        }
-                        
-                        // Calculate crop position from center
-                        const cropX = centerX - boxWidth / 2;
-                        const cropY = centerY - boxHeight / 2;
-                        
-                        // Clamp to image bounds
-                        const clampedX = Math.max(0, Math.min(cropX, img.width - boxWidth));
-                        const clampedY = Math.max(0, Math.min(cropY, img.height - boxHeight));
-                        const clampedW = Math.min(boxWidth, img.width - clampedX);
-                        const clampedH = Math.min(boxHeight, img.height - clampedY);
-                        
-                        canvas.width = clampedW;
-                        canvas.height = clampedH;
-                        ctx.drawImage(img, clampedX, clampedY, clampedW, clampedH, 0, 0, clampedW, clampedH);
-                        
-                        div.innerHTML = `
-                            <img src="${canvas.toDataURL('image/jpeg')}" alt="Preview ${index + 1}" onclick="openCropModal(${index})">
-                            <button type="button" class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
-                            <div class="crop-badge" title="Cropped - click image to re-crop">✓</div>
-                            <div class="media-reorder-controls">
-                                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaToFirst(${index})" ${index === 0 ? 'disabled' : ''} title="Move to first">⏮</button>
-                                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaUp(${index})" ${index === 0 ? 'disabled' : ''} title="Move left">←</button>
-                                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaDown(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move right">→</button>
-                                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaToLast(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move to last">⏭</button>
-                            </div>
-                        `;
-                    } else {
-                        div.innerHTML = `
-                            <img src="${e.target.result}" alt="Preview ${index + 1}" onclick="openCropModal(${index})">
-                            <button type="button" class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
-                            <div class="media-reorder-controls">
-                                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaToFirst(${index})" ${index === 0 ? 'disabled' : ''} title="Move to first">⏮</button>
-                                <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaUp(${index})" ${index === 0 ? 'disabled' : ''} title="Move left">←</button>
-                                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaDown(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move right">→</button>
-                                <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaToLast(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move to last">⏭</button>
-                            </div>
-                        `;
+            const img = new Image();
+            img.onload = () => {
+                if (cropData[index] && cropData[index].cropped) {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Get current aspect ratio from dropdown
+                    let aspectRatio = document.getElementById('aspectRatio').value;
+                    if (aspectRatio === 'custom') {
+                        const customRatio = document.getElementById('customAspectRatio').value;
+                        aspectRatio = customRatio || '1:1';
                     }
-                };
-                img.src = e.target.result;
-            }
+                    
+                    // Parse target aspect ratio
+                    let targetRatio;
+                    if (aspectRatio === 'original') {
+                        targetRatio = img.width / img.height;
+                    } else if (aspectRatio.includes(':')) {
+                        const [w, h] = aspectRatio.split(':').map(parseFloat);
+                        targetRatio = w / h;
+                    } else {
+                        targetRatio = parseFloat(aspectRatio);
+                    }
+                    
+                    // Get stored center point
+                    const centerX = cropData[index].centerX;
+                    const centerY = cropData[index].centerY;
+                    
+                    // Calculate box dimensions based on current aspect ratio
+                    let boxWidth, boxHeight;
+                    const storedBoxWidth = cropData[index].boxWidth;
+                    const storedBoxHeight = cropData[index].boxHeight;
+                    
+                    // Try to maximize crop area while maintaining aspect ratio
+                    const possibleWidthFromHeight = storedBoxHeight * targetRatio;
+                    const possibleHeightFromWidth = storedBoxWidth / targetRatio;
+                    
+                    if (possibleWidthFromHeight <= img.width) {
+                        boxWidth = possibleWidthFromHeight;
+                        boxHeight = storedBoxHeight;
+                    } else if (possibleHeightFromWidth <= img.height) {
+                        boxWidth = storedBoxWidth;
+                        boxHeight = possibleHeightFromWidth;
+                    } else {
+                        // Scale down
+                        if (storedBoxWidth / img.width > storedBoxHeight / img.height) {
+                            boxWidth = storedBoxWidth;
+                            boxHeight = boxWidth / targetRatio;
+                        } else {
+                            boxHeight = storedBoxHeight;
+                            boxWidth = boxHeight * targetRatio;
+                        }
+                    }
+                    
+                    // Calculate crop position from center
+                    const cropX = centerX - boxWidth / 2;
+                    const cropY = centerY - boxHeight / 2;
+                    
+                    // Clamp to image bounds
+                    const clampedX = Math.max(0, Math.min(cropX, img.width - boxWidth));
+                    const clampedY = Math.max(0, Math.min(cropY, img.height - boxHeight));
+                    const clampedW = Math.min(boxWidth, img.width - clampedX);
+                    const clampedH = Math.min(boxHeight, img.height - clampedY);
+                    
+                    canvas.width = clampedW;
+                    canvas.height = clampedH;
+                    ctx.drawImage(img, clampedX, clampedY, clampedW, clampedH, 0, 0, clampedW, clampedH);
+                    
+                    div.innerHTML = `
+                        <img src="${canvas.toDataURL('image/jpeg')}" alt="Preview ${index + 1}" onclick="openCropModal(${index})">
+                        <button type="button" class="media-preview-remove" onclick="removeMedia(${index})">&times;</button>
+                        <div class="crop-badge" title="Cropped - click image to re-crop">✓</div>
+                        <div class="media-reorder-controls">
+                            <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaToFirst(${index})" ${index === 0 ? 'disabled' : ''} title="Move to first">⏮</button>
+                            <button type="button" class="media-move-btn ${index === 0 ? 'disabled' : ''}" onclick="moveMediaUp(${index})" ${index === 0 ? 'disabled' : ''} title="Move left">←</button>
+                            <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaDown(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move right">→</button>
+                            <button type="button" class="media-move-btn ${index === selectedFiles.length - 1 ? 'disabled' : ''}" onclick="moveMediaToLast(${index})" ${index === selectedFiles.length - 1 ? 'disabled' : ''} title="Move to last">⏭</button>
+                        </div>
+                    `;
+                } else {
+                    div.innerHTML = `
+                        <img src="${e.target.result}" alt="Preview ${index + 1}" onclick="openCropModal(${index})">
+                        ${controlsHtml}
+                    `;
+                }
+            };
+            img.src = e.target.result;
         };
         reader.readAsDataURL(file);
     });
@@ -3807,8 +3882,73 @@ function updatePreview() {
     previewContainer.style.aspectRatio = normalizedRatio;
     
     if (selectedFiles.length > 0) {
-        // Only show current image in carousel
+        // Only show current media in carousel
         const currentFile = selectedFiles[currentCarouselIndex];
+        const isExisting = currentFile && currentFile.isExisting;
+        const isVideo = currentFile && currentFile.type && currentFile.type.startsWith('video');
+
+        // Helper to update carousel controls and indicators
+        const updateCarouselUI = () => {
+            const carouselPrev = document.getElementById('carouselPrev');
+            const carouselNext = document.getElementById('carouselNext');
+            const indicatorsContainer = document.getElementById('carouselIndicators');
+            
+            if (selectedFiles.length > 1) {
+                if (carouselPrev) carouselPrev.style.display = 'flex';
+                if (carouselNext) carouselNext.style.display = 'flex';
+                
+                if (indicatorsContainer) {
+                    const indicators = indicatorsContainer.querySelectorAll('.carousel-indicator');
+                    if (indicators.length !== selectedFiles.length) {
+                        indicatorsContainer.innerHTML = '';
+                        selectedFiles.forEach((_, idx) => {
+                            const indicator = document.createElement('div');
+                            indicator.className = `carousel-indicator ${idx === currentCarouselIndex ? 'active' : ''}`;
+                            indicator.addEventListener('click', () => {
+                                currentCarouselIndex = idx;
+                                updatePreview();
+                            });
+                            indicatorsContainer.appendChild(indicator);
+                        });
+                    } else {
+                        indicators.forEach((indicator, idx) => {
+                            indicator.classList.toggle('active', idx === currentCarouselIndex);
+                        });
+                    }
+                }
+            } else {
+                if (carouselPrev) carouselPrev.style.display = 'none';
+                if (carouselNext) carouselNext.style.display = 'none';
+                if (indicatorsContainer) indicatorsContainer.innerHTML = '';
+            }
+        };
+
+        // If this is a video, or an existing media we already have a URL for, render directly
+        if (isVideo || (isExisting && currentFile.url)) {
+            previewContainer.innerHTML = '';
+            if (isVideo) {
+                const videoEl = document.createElement('video');
+                videoEl.src = isExisting ? currentFile.url : URL.createObjectURL(currentFile);
+                videoEl.className = 'ig-image';
+                videoEl.style.display = 'block';
+                videoEl.controls = true;
+                videoEl.playsInline = true;
+                previewContainer.appendChild(videoEl);
+            } else {
+                const imgEl = document.createElement('img');
+                imgEl.src = currentFile.url;
+                imgEl.className = 'ig-image';
+                imgEl.style.display = 'block';
+                imgEl.style.objectFit = 'cover';
+                imgEl.style.width = '100%';
+                imgEl.style.height = '100%';
+                previewContainer.appendChild(imgEl);
+            }
+            updateCarouselUI();
+            return;
+        }
+
+        // Image (new upload) path with optional crop
         const reader = new FileReader();
         reader.onload = (e) => {
             const img = new Image();
@@ -3901,42 +4041,8 @@ function updatePreview() {
             img.src = e.target.result;
         };
         reader.readAsDataURL(currentFile);
-        
-        // Show/hide carousel buttons and update indicators
-        const carouselPrev = document.getElementById('carouselPrev');
-        const carouselNext = document.getElementById('carouselNext');
-        const indicatorsContainer = document.getElementById('carouselIndicators');
-        
-        if (selectedFiles.length > 1) {
-            if (carouselPrev) carouselPrev.style.display = 'flex';
-            if (carouselNext) carouselNext.style.display = 'flex';
-            
-            // Update only indicators that changed
-            const indicators = indicatorsContainer.querySelectorAll('.carousel-indicator');
-            
-            // If count changed, rebuild
-            if (indicators.length !== selectedFiles.length) {
-                indicatorsContainer.innerHTML = '';
-                selectedFiles.forEach((_, idx) => {
-                    const indicator = document.createElement('div');
-                    indicator.className = `carousel-indicator ${idx === currentCarouselIndex ? 'active' : ''}`;
-                    indicator.addEventListener('click', () => {
-                        currentCarouselIndex = idx;
-                        updatePreview();
-                    });
-                    indicatorsContainer.appendChild(indicator);
-                });
-            } else {
-                // Just update active state
-                indicators.forEach((indicator, idx) => {
-                    indicator.classList.toggle('active', idx === currentCarouselIndex);
-                });
-            }
-        } else {
-            if (carouselPrev) carouselPrev.style.display = 'none';
-            if (carouselNext) carouselNext.style.display = 'none';
-            indicatorsContainer.innerHTML = '';
-        }
+
+        updateCarouselUI();
     }
 }
 
@@ -3947,6 +4053,8 @@ function initializeWeekCalendar() {
     if (!calendar) return;
     
     calendar.innerHTML = '';
+    // Bump render token to invalidate in-flight async renders
+    const renderToken = ++calendarRenderToken;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
@@ -3963,11 +4071,13 @@ function initializeWeekCalendar() {
     
     // Get scheduled posts for this week to show indicators
     getScheduledPostsForWeek().then(scheduledPosts => {
+        // Ignore stale renders
+        if (renderToken !== calendarRenderToken) return;
         for (let i = 0; i < 7; i++) {
             const date = new Date(startDate);
             date.setDate(date.getDate() + i);
             
-            const dateStr = date.toISOString().split('T')[0];
+            const dateStr = formatLocalDate(date);
             const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
             const dayNum = date.getDate();
             const monthName = date.toLocaleDateString('en-US', { month: 'short' });
@@ -3977,7 +4087,7 @@ function initializeWeekCalendar() {
             
             // Check if there are posts scheduled for this day
             const postsForDay = scheduledPosts.filter(post => {
-                const postDate = new Date(post.scheduled_time).toISOString().split('T')[0];
+                const postDate = formatLocalDate(new Date(post.scheduled_time));
                 return postDate === dateStr;
             });
             
@@ -4005,6 +4115,14 @@ function initializeWeekCalendar() {
 function navigateWeek(direction) {
     calendarWeekOffset += direction;
     initializeWeekCalendar();
+}
+
+// Format a Date as YYYY-MM-DD in local time (avoids UTC shifting dates)
+function formatLocalDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function selectCalendarDay(dayElement) {
@@ -4057,7 +4175,7 @@ function handleManualDateTimeChange(e) {
     if (!scheduledTime) return;
     
     const dateTime = new Date(scheduledTime);
-    const dateStr = dateTime.toISOString().split('T')[0];
+    const dateStr = formatLocalDate(dateTime);
     
     // Update calendar selection
     const allDays = document.querySelectorAll('.week-calendar-day');
@@ -4143,8 +4261,11 @@ function navigateCarousel(direction) {
     updatePreview();
 }
 
-async function handleCreatePost(e, status = 'scheduled') {
+async function handleCreatePost(e, status = 'scheduled', publishNow = false) {
     if (e) e.preventDefault();
+    
+    const editPostId = document.getElementById('editPostId').value;
+    const isEditMode = !!editPostId;
     
     const caption = document.getElementById('postCaption').value;
     const selectedDate = document.querySelector('.week-calendar-day.selected');
@@ -4193,6 +4314,10 @@ async function handleCreatePost(e, status = 'scheduled') {
     formData.append('status', status);
     formData.append('aspect_ratio', aspectRatio);
     
+    // For edit mode, track existing media order and sequence (existing + new) for accurate ordering on server
+    const keepMediaIds = [];
+    const mediaSequence = [];
+    
     // Process each file with crop data if available
     let filesProcessed = 0;
     let processComplete = false;
@@ -4201,35 +4326,65 @@ async function handleCreatePost(e, status = 'scheduled') {
         for (let index = 0; index < selectedFiles.length; index++) {
             const file = selectedFiles[index];
             
-            if (cropData[index] && cropData[index].cropped) {
-                // Apply crop and get cropped blob
-                const croppedBlob = await applyCropToFile(file, cropData[index]);
-                const croppedFile = new File([croppedBlob], file.name, { type: 'image/jpeg' });
-                formData.append('media', croppedFile);
+            // Check if this is an existing media file
+            if (file.isExisting && file.mediaId) {
+                keepMediaIds.push(file.mediaId);
+                mediaSequence.push({ type: 'existing', id: file.mediaId });
             } else {
-                // Use original file
-                formData.append('media', file);
+                // New file to upload
+                let uploadFile = file;
+                if (cropData[index] && cropData[index].cropped) {
+                    const croppedBlob = await applyCropToFile(file, cropData[index]);
+                    uploadFile = new File([croppedBlob], file.name, { type: 'image/jpeg' });
+                }
+                formData.append('media', uploadFile);
+                mediaSequence.push({ type: 'new' });
             }
+        }
+        
+        // Add keep_media_ids and sequence for edit mode
+        if (isEditMode) {
+            formData.append('keep_media_ids', keepMediaIds.join(','));
+            formData.append('media_sequence', JSON.stringify(mediaSequence));
         }
         
         // Send to backend
         try {
-            const response = await apiCall('/posts/', {
-                method: 'POST',
+            const url = isEditMode ? `/posts/${editPostId}` : '/posts/';
+            const method = isEditMode ? 'PUT' : 'POST';
+            
+            const response = await apiCall(url, {
+                method: method,
                 body: formData,
             });
             
             const data = await response.json();
             
             if (response.ok) {
-                showToast(`Post ${status === 'draft' ? 'saved as draft' : 'scheduled'} successfully!`, 'success');
+                const postId = (data.post && data.post.id) || editPostId || data.id;
+                showToast(`Post ${isEditMode ? 'updated' : (status === 'draft' ? 'saved as draft' : (publishNow ? 'created, publishing now' : 'scheduled'))}!`, 'success');
+
+                if (publishNow && postId) {
+                    try {
+                        const publishResponse = await apiCall(`/posts/${postId}/publish`, { method: 'POST' });
+                        const publishData = await publishResponse.json();
+                        if (publishResponse.ok) {
+                            showToast('Post published now', 'success');
+                        } else {
+                            showToast(publishData.error || 'Failed to publish now', 'error');
+                        }
+                    } catch (err) {
+                        showToast('Failed to publish now', 'error');
+                    }
+                }
+
                 resetPostForm();
-                navigateTo('/dashboard');
+                navigateTo('/posts');
             } else {
-                showToast(data.error || 'Failed to create post', 'error');
+                showToast(data.error || `Failed to ${isEditMode ? 'update' : 'create'} post`, 'error');
             }
         } catch (error) {
-            showToast('Failed to create post', 'error');
+            showToast(`Failed to ${isEditMode ? 'update' : 'create'} post`, 'error');
         }
     };
     
@@ -4270,6 +4425,8 @@ function resetPostForm() {
     const scheduledTime = document.getElementById('scheduledTime');
     const aspectRatioSelect = document.getElementById('aspectRatio');
     const customAspectInput = document.getElementById('customAspectRatio');
+    const editPostId = document.getElementById('editPostId');
+    const postFormTitle = document.getElementById('postFormTitle');
     
     if (form) form.reset();
     selectedFiles = [];
@@ -4288,6 +4445,8 @@ function resetPostForm() {
         customAspectInput.value = '';
         customAspectInput.style.display = 'none';
     }
+    if (editPostId) editPostId.value = '';
+    if (postFormTitle) postFormTitle.textContent = 'Create New Post';
     
     // Reset carousel buttons
     const carouselPrev = document.getElementById('carouselPrev');
@@ -4307,8 +4466,19 @@ function resetPostForm() {
 }
 
 async function initializeNewPostView() {
-    // Initialize the new post form on first load
-    // Do not reinitialize calendar - it's already initialized in setupViewListeners()
+    // Check if this is edit mode
+    const urlParams = new URLSearchParams(window.location.search);
+    const editPostId = urlParams.get('edit');
+    
+    if (editPostId) {
+        // Edit mode - load existing post data
+        await loadPostForEditing(editPostId);
+    } else {
+        // Create mode - reset form
+        resetPostForm();
+        document.getElementById('postFormTitle').textContent = 'Create New Post';
+        document.getElementById('editPostId').value = '';
+    }
     
     // Fetch team Instagram data for preview
     if (currentUser && currentUser.current_team_id) {
@@ -4343,6 +4513,154 @@ async function initializeNewPostView() {
             console.warn('Failed to fetch team Instagram data for preview:', error);
             // Continue anyway - preview will use fallback
         }
+    }
+}
+
+async function loadPostForEditing(postId) {
+    try {
+        // Update UI
+        document.getElementById('postFormTitle').textContent = 'Edit Post';
+        document.getElementById('editPostId').value = postId;
+        
+        // Fetch post data
+        const response = await apiCall(`/posts/${postId}`);
+        const post = await response.json();
+        
+        if (!response.ok) {
+            showToast('Failed to load post for editing', 'error');
+            navigateTo('/posts');
+            return;
+        }
+        
+        // Populate caption
+        const captionField = document.getElementById('postCaption');
+        if (captionField) {
+            captionField.value = post.caption || '';
+            updateCaptionCount();
+        }
+        
+        // Populate scheduled time
+        const scheduledTimeField = document.getElementById('scheduledTime');
+        if (scheduledTimeField && post.scheduled_time) {
+            // Convert to local datetime-local format
+            const scheduledDate = new Date(post.scheduled_time);
+            const year = scheduledDate.getFullYear();
+            const month = String(scheduledDate.getMonth() + 1).padStart(2, '0');
+            const day = String(scheduledDate.getDate()).padStart(2, '0');
+            const hours = String(scheduledDate.getHours()).padStart(2, '0');
+            const minutes = String(scheduledDate.getMinutes()).padStart(2, '0');
+            scheduledTimeField.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+
+            // Show the correct week and select the day in the calendar
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const scheduledMidnight = new Date(scheduledDate);
+            scheduledMidnight.setHours(0, 0, 0, 0);
+            const diffDays = Math.floor((scheduledMidnight - today) / (1000 * 60 * 60 * 24));
+            const desiredOffset = Math.floor(diffDays / 7);
+            calendarWeekOffset = desiredOffset;
+            initializeWeekCalendar();
+            
+            // After calendar renders, select the correct day and time period (if matches presets)
+            setTimeout(() => {
+                const dateStr = formatLocalDate(scheduledMidnight);
+                const targetDay = document.querySelector(`.week-calendar-day[data-date="${dateStr}"]`);
+                if (targetDay && !targetDay.classList.contains('disabled')) {
+                    selectCalendarDay(targetDay);
+                }
+                
+                const timePeriodSelect = document.getElementById('timePeriod');
+                if (timePeriodSelect) {
+                    const timeMap = { morning: 9, afternoon: 12, evening: 17, night: 20 };
+                    const hour = scheduledDate.getHours();
+                    const matched = Object.entries(timeMap).find(([, h]) => h === hour);
+                    if (matched) {
+                        timePeriodSelect.value = matched[0];
+                    } else {
+                        timePeriodSelect.value = '';
+                    }
+                }
+                updatePreview();
+            }, 50);
+        }
+        
+        // Load existing media
+        if (post.media && post.media.length > 0) {
+            // Create pseudo-File objects from existing media URLs
+            // We'll store them as objects with mediaId so we know they're existing media
+            selectedFiles = [];
+            const mediaPreview = document.getElementById('mediaPreview');
+            const previewImages = document.getElementById('previewImages');
+            
+            if (mediaPreview) mediaPreview.innerHTML = '';
+            if (previewImages) previewImages.innerHTML = '';
+            
+            for (let i = 0; i < post.media.length; i++) {
+                const media = post.media[i];
+                const mediaUrl = `/api/posts/media/${media.id}`;
+                
+                // Create a pseudo-file object with metadata
+                const pseudoFile = {
+                    mediaId: media.id,
+                    name: media.filename,
+                    type: media.media_type === 'video' ? 'video/mp4' : 'image/jpeg',
+                    isExisting: true,
+                    url: mediaUrl
+                };
+                
+                selectedFiles.push(pseudoFile);
+            }
+            
+            // Render previews using the standard button-based controls
+            displayMediaPreview();
+            updatePreview();
+        }
+        
+        // Update preview
+        updatePreview();
+        
+        showToast('Post loaded for editing', 'info');
+    } catch (error) {
+        console.error('Error loading post for editing:', error);
+        showToast('Failed to load post for editing', 'error');
+        navigateTo('/posts');
+    }
+}
+
+function updateCaptionCount() {
+    const caption = document.getElementById('postCaption').value || '';
+    const captionCount = document.getElementById('captionCount');
+    if (captionCount) {
+        captionCount.textContent = caption.length;
+    }
+}
+
+function updateCarouselControls() {
+    const carouselPrev = document.getElementById('carouselPrev');
+    const carouselNext = document.getElementById('carouselNext');
+    const indicatorsContainer = document.getElementById('carouselIndicators');
+    
+    if (selectedFiles.length > 1) {
+        if (carouselPrev) carouselPrev.style.display = 'flex';
+        if (carouselNext) carouselNext.style.display = 'flex';
+        
+        // Update indicators
+        if (indicatorsContainer) {
+            indicatorsContainer.innerHTML = '';
+            selectedFiles.forEach((_, idx) => {
+                const indicator = document.createElement('div');
+                indicator.className = `carousel-indicator ${idx === currentCarouselIndex ? 'active' : ''}`;
+                indicator.addEventListener('click', () => {
+                    currentCarouselIndex = idx;
+                    updatePreview();
+                });
+                indicatorsContainer.appendChild(indicator);
+            });
+        }
+    } else {
+        if (carouselPrev) carouselPrev.style.display = 'none';
+        if (carouselNext) carouselNext.style.display = 'none';
+        if (indicatorsContainer) indicatorsContainer.innerHTML = '';
     }
 }
 
@@ -4709,6 +5027,13 @@ function openCropModal(index) {
     const cropImage = document.getElementById('cropImage');
     const cropBox = document.getElementById('cropBox');
     
+    const file = selectedFiles[index];
+    // Prevent cropping on existing media or videos
+    if (!file || file.isExisting || (file.type && file.type.startsWith('video'))) {
+        showToast('Crop is only available for newly uploaded images', 'info');
+        return;
+    }
+
     // Load the image
     const reader = new FileReader();
     reader.onload = (e) => {

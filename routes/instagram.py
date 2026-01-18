@@ -18,81 +18,14 @@ ig_api = InstagramAPI()
 @jwt_required()
 def connect_instagram():
     """
-    Connect Instagram Business Account using access token.
-    
-    Required: access_token
-    Optional: page_id (for page lookup) OR instagram_account_id (direct)
+    DEPRECATED: Instagram connection is now managed at the team level.
+    Use /api/team-settings/<team_id>/instagram/connect instead.
     """
-    current_user_id = int(get_jwt_identity())
-    user = User.query.get(current_user_id)
-    
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
-    
-    data = request.get_json()
-    
-    if not data or not data.get('access_token'):
-        logger.error('Missing required field: access_token')
-        return jsonify({'error': 'Missing access_token'}), 400
-    
-    try:
-        logger.info(f'Attempting to connect Instagram for user {current_user_id}')
-        
-        # Get long-lived token
-        logger.debug('Converting short-lived token to long-lived token...')
-        token_data = ig_api.get_long_lived_token(data['access_token'])
-        logger.info('Successfully obtained long-lived token')
-        
-        # Get Instagram Business Account ID - two methods
-        ig_account_id = None
-        
-        # Method 1: Direct Instagram Account ID provided (bypass page lookup)
-        if data.get('instagram_account_id'):
-            ig_account_id = data['instagram_account_id']
-            logger.info(f'Using directly provided Instagram Account ID: {ig_account_id}')
-        
-        # Method 2: Look up via Facebook Page ID
-        elif data.get('page_id'):
-            logger.debug(f'Getting Instagram Business Account for page {data["page_id"]}...')
-            ig_account_id = ig_api.get_instagram_business_account(
-                token_data['access_token'],
-                data['page_id']
-            )
-            
-            if not ig_account_id:
-                error_msg = 'No Instagram Business Account found for this page. Try providing instagram_account_id directly instead.'
-                logger.error(error_msg)
-                return jsonify({'error': error_msg}), 400
-            
-            logger.info(f'Found Instagram Business Account via page: {ig_account_id}')
-        else:
-            return jsonify({'error': 'Must provide either page_id or instagram_account_id'}), 400
-        
-        logger.info(f'Using Instagram Business Account: {ig_account_id}')
-        
-        # Get account info
-        logger.debug('Retrieving account information...')
-        account_info = ig_api.get_account_info(ig_account_id, token_data['access_token'])
-        
-        # Update user
-        user.instagram_account_id = ig_account_id
-        user.instagram_access_token = token_data['access_token']
-        user.instagram_username = account_info.get('username')
-        user.token_expires_at = token_data['expires_at']
-        
-        db.session.commit()
-        logger.info(f'Instagram connected successfully for user {current_user_id}: @{account_info.get("username")}')
-        
-        return jsonify({
-            'message': 'Instagram connected successfully',
-            'instagram_username': account_info.get('username'),
-            'account_info': account_info
-        }), 200
-    
-    except Exception as e:
-        error_msg = f'Instagram connection failed: {str(e)}'
-        logger.error(error_msg, exc_info=True)
-        return jsonify({'error': error_msg, 'details': str(e)}), 400
+    return jsonify({
+        'error': 'Instagram connection is now managed at the team level',
+        'message': 'Please use the team settings to connect Instagram to your team account',
+        'docs': 'Use POST /api/team-settings/<team_id>/instagram/connect'
+    }), 400
 
 
 @instagram_bp.route('/fetch-account-id', methods=['POST'])
@@ -145,29 +78,22 @@ def fetch_account_id():
 @jwt_required()
 def disconnect_instagram():
     """
-    Disconnect Instagram account.
+    DEPRECATED: Instagram disconnection is now managed at the team level.
+    Use POST /api/team-settings/<team_id>/instagram/disconnect instead.
     """
-    current_user_id = int(get_jwt_identity())
-    user = User.query.get(current_user_id)
-    
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
-    
-    user.instagram_account_id = None
-    user.instagram_access_token = None
-    user.instagram_username = None
-    user.token_expires_at = None
-    
-    db.session.commit()
-    
-    return jsonify({'message': 'Instagram disconnected successfully'}), 200
+    return jsonify({
+        'error': 'Instagram disconnection is now managed at the team level',
+        'message': 'Please use the team settings to disconnect Instagram from your team account',
+        'docs': 'Use POST /api/team-settings/<team_id>/instagram/disconnect'
+    }), 400
 
 
 @instagram_bp.route('/status', methods=['GET'])
 @jwt_required()
 def instagram_status():
     """
-    Check Instagram connection status.
+    Check Instagram connection status for current user's teams.
+    Returns status of Instagram connections for all teams the user is a member of.
     """
     current_user_id = int(get_jwt_identity())
     user = User.query.get(current_user_id)
@@ -175,39 +101,33 @@ def instagram_status():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
-    if not user.instagram_account_id or not user.instagram_access_token:
+    from models import TeamMember
+    team_memberships = TeamMember.query.filter_by(user_id=current_user_id).all()
+    
+    if not team_memberships:
         return jsonify({
             'connected': False,
-            'message': 'Instagram not connected'
+            'message': 'User is not a member of any team'
         }), 200
     
-    # Check if token is expired
-    if user.token_expires_at and user.token_expires_at < datetime.utcnow():
-        return jsonify({
-            'connected': False,
-            'message': 'Access token expired',
-            'expired': True
-        }), 200
+    teams_status = []
+    for membership in team_memberships:
+        team = membership.team
+        if team:
+            status = {
+                'team_id': team.id,
+                'team_name': team.name,
+                'instagram_connected': bool(team.instagram_account_id and team.instagram_access_token),
+                'instagram_username': team.instagram_username if team.instagram_account_id else None
+            }
+            teams_status.append(status)
     
-    try:
-        # Try to get account info to verify connection
-        account_info = ig_api.get_account_info(
-            user.instagram_account_id,
-            user.instagram_access_token
-        )
-        
-        return jsonify({
-            'connected': True,
-            'instagram_username': user.instagram_username,
-            'account_info': account_info,
-            'token_expires_at': user.token_expires_at.isoformat() if user.token_expires_at else None
-        }), 200
+    any_connected = any(t['instagram_connected'] for t in teams_status)
     
-    except Exception as e:
-        return jsonify({
-            'connected': False,
-            'error': str(e)
-        }), 200
+    return jsonify({
+        'connected': any_connected,
+        'teams': teams_status
+    }), 200
 
 
 @instagram_bp.route('/posts', methods=['GET'])

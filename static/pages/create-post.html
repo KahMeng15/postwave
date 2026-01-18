@@ -1,13 +1,16 @@
 <!-- New Post View -->
 <div id="newPostView" class="container">
     <div class="view-header">
-        <h1>Create New Post</h1>
+        <h1 id="postFormTitle">Create New Post</h1>
     </div>
     <div class="post-editor">
         <div class="editor-main">
             <div class="card">
                 <div class="card-body">
                     <form id="newPostForm">
+                        <!-- Hidden field to track edit mode -->
+                        <input type="hidden" id="editPostId" value="">
+                        
                         <div class="form-group">
                             <label>Media Files (1-20 images)</label>
                             <div id="dropZone" class="drop-zone">
@@ -55,7 +58,7 @@
                         <div class="form-group">
                             <label>Posting Time</label>
                             <div class="time-period-selector">
-                                <select id="timePeriod" required>
+                                <select id="timePeriod">
                                     <option value="">Select a time</option>
                                     <option value="morning">Morning - 9:00 AM</option>
                                     <option value="afternoon">Middle of the Day - 12:00 PM</option>
@@ -73,6 +76,7 @@
                         <div class="form-actions">
                             <button type="button" id="saveDraft" class="btn btn-secondary">Save as Draft</button>
                             <button type="submit" class="btn btn-primary">Schedule Post</button>
+                            <button type="button" id="postNow" class="btn btn-success">Post Now</button>
                         </div>
                     </form>
                 </div>

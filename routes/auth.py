@@ -10,25 +10,36 @@ auth_bp = Blueprint('auth', __name__)
 
 def refresh_user_cache_async(user_id):
     """
-    Refresh Instagram cache for a user asynchronously.
-    Called after login to get fresh data.
+    Refresh Instagram cache for a user's teams asynchronously.
+    Called after login to get fresh data from connected team Instagram accounts.
     """
     try:
         from instagram_api import InstagramAPI
         from cache_manager import CacheManager
+        from models import Team
         
         user = User.query.get(user_id)
-        if not user or not user.instagram_account_id or not user.instagram_access_token:
+        if not user:
             return
         
+        # Get user's teams that have Instagram connected
+        from models import TeamMember
+        team_memberships = TeamMember.query.filter_by(user_id=user_id).all()
+        
         ig_api = InstagramAPI()
-        media_list = ig_api.get_media_list(
-            user.instagram_access_token,
-            user.instagram_account_id,
-            limit=25
-        )
-        CacheManager.cache_posts_batch(user.id, media_list)
-        logger.info(f'Refreshed cache on login for user {user_id}')
+        for membership in team_memberships:
+            team = membership.team
+            if team and team.instagram_account_id and team.instagram_access_token:
+                try:
+                    media_list = ig_api.get_media_list(
+                        team.instagram_access_token,
+                        team.instagram_account_id,
+                        limit=25
+                    )
+                    CacheManager.cache_posts_batch(user_id, media_list)
+                    logger.info(f'Refreshed cache on login for user {user_id} from team {team.id}')
+                except Exception as e:
+                    logger.debug(f'Failed to refresh cache from team {team.id}: {str(e)}')
     except Exception as e:
         logger.debug(f'Non-blocking cache refresh failed for user {user_id}: {str(e)}')
         # Don't raise - login should still succeed even if cache refresh fails
