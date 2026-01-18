@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, User, Team, TeamMember, ActivityLog, Invitation, Post
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import secrets
 from functools import wraps
@@ -102,6 +102,7 @@ def get_instagram_settings(team_id):
         
         return jsonify({
             'instagram_username': team.instagram_username,
+            'instagram_profile_picture': team.instagram_profile_picture,
             'instagram_connected': bool(team.instagram_account_id),
             'token_expires_at': team.token_expires_at.isoformat() if team.token_expires_at else None
         }), 200
@@ -145,6 +146,41 @@ def disconnect_instagram(team_id):
     except Exception as e:
         logger.error(f'Failed to disconnect Instagram: {str(e)}', exc_info=True)
         return jsonify({'error': 'Failed to disconnect Instagram'}), 500
+
+
+@team_settings_bp.route('/<int:team_id>/instagram/fetch-profile-picture', methods=['POST'])
+@jwt_required()
+@require_team_role('owner', 'manager')
+def fetch_team_profile_picture(team_id):
+    """Fetch and update team's Instagram profile picture"""
+    try:
+        team = Team.query.get(team_id)
+        if not team:
+            return jsonify({'error': 'Team not found'}), 404
+        
+        if not team.instagram_account_id or not team.instagram_access_token:
+            return jsonify({'error': 'Instagram not connected'}), 400
+        
+        from instagram_api import InstagramAPI
+        ig_api = InstagramAPI()
+        
+        # Fetch account info including profile picture
+        account_info = ig_api.get_account_info(team.instagram_account_id, team.instagram_access_token)
+        
+        if account_info and account_info.get('profile_picture_url'):
+            team.instagram_profile_picture = account_info['profile_picture_url']
+            db.session.commit()
+            return jsonify({
+                'instagram_profile_picture': team.instagram_profile_picture,
+                'message': 'Profile picture fetched successfully'
+            }), 200
+        else:
+            return jsonify({'error': 'Could not fetch profile picture from Instagram'}), 400
+    
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f'Failed to fetch profile picture: {error_msg}', exc_info=True)
+        return jsonify({'error': f'Failed to fetch profile picture: {error_msg}'}), 500
 
 
 # ==================== TEAM MEMBERS ====================

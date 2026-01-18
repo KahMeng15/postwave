@@ -795,7 +795,7 @@ textarea {
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+    background-color: #f09433;
     background-size: cover;
     background-position: center;
     display: flex;

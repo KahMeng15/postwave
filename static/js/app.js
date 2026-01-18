@@ -3,6 +3,7 @@ const API_BASE = '/api';
 
 // State
 let currentUser = null;
+let currentTeamData = null; // Cache for current team's Instagram account data
 let userProfileData = null; // Cache for profile picture and Instagram username
 let selectedFiles = [];
 let currentTheme = localStorage.getItem('theme') || 'light';
@@ -2704,6 +2705,36 @@ async function fetchCurrentUser() {
                     if (navTeamName) {
                         navTeamName.textContent = currentTeam.name;
                     }
+                    
+                    // Fetch team's Instagram data for preview
+                    try {
+                        const igResponse = await apiCall(`/team-settings/${currentTeam.id}/instagram`);
+                        const igData = await igResponse.json();
+                        if (igResponse.ok) {
+                            currentTeamData = {
+                                username: igData.instagram_username,
+                                profilePicture: igData.instagram_profile_picture
+                            };
+                            
+                            // If profile picture is missing but Instagram is connected, try to fetch it
+                            if (!igData.instagram_profile_picture && igData.instagram_connected) {
+                                try {
+                                    const ppResponse = await apiCall(`/team-settings/${currentTeam.id}/instagram/fetch-profile-picture`, {
+                                        method: 'POST'
+                                    });
+                                    const ppData = await ppResponse.json();
+                                    if (ppResponse.ok && ppData.instagram_profile_picture) {
+                                        currentTeamData.profilePicture = ppData.instagram_profile_picture;
+                                    }
+                                } catch (error) {
+                                    console.warn('Failed to fetch team profile picture:', error);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Failed to fetch team Instagram data:', error);
+                        // Continue anyway - team data is optional
+                    }
                 }
             } catch (error) {
                 console.warn('Failed to fetch teams:', error);
@@ -2739,10 +2770,13 @@ async function fetchCurrentUser() {
 function updateProfilePicturePreview() {
     if (!currentUser) return;
     
-    // Update username in preview - always use Instagram username when available
+    // Update username in preview - use team's Instagram account when available
     const previewUsername = document.getElementById('previewUsername');
     if (previewUsername) {
-        if (currentUser.instagram_username) {
+        // Prioritize team Instagram data (for the managed account)
+        if (currentTeamData && currentTeamData.username) {
+            previewUsername.textContent = currentTeamData.username;
+        } else if (currentUser.instagram_username) {
             previewUsername.textContent = currentUser.instagram_username;
             // Also update the cache for consistency
             if (!userProfileData) userProfileData = {};
@@ -2757,7 +2791,13 @@ function updateProfilePicturePreview() {
     const avatarEl = document.querySelector('.ig-avatar');
     if (!avatarEl) return;
     
-    if (userProfileData && userProfileData.profilePicture) {
+    // Prioritize team profile picture
+    if (currentTeamData && currentTeamData.profilePicture) {
+        avatarEl.style.backgroundImage = `url('${currentTeamData.profilePicture}')`;
+        avatarEl.style.backgroundSize = 'cover';
+        avatarEl.style.backgroundPosition = 'center';
+        avatarEl.textContent = '';
+    } else if (userProfileData && userProfileData.profilePicture) {
         avatarEl.style.backgroundImage = `url('${userProfileData.profilePicture}')`;
         avatarEl.style.backgroundSize = 'cover';
         avatarEl.style.backgroundPosition = 'center';
@@ -2765,7 +2805,14 @@ function updateProfilePicturePreview() {
     } else {
         // Fallback to initial-based avatar
         avatarEl.style.backgroundImage = 'none';
-        const displayName = (currentUser && currentUser.instagram_username) || (userProfileData && userProfileData.username) || 'U';
+        let displayName = 'U';
+        if (currentTeamData && currentTeamData.username) {
+            displayName = currentTeamData.username;
+        } else if (currentUser && currentUser.instagram_username) {
+            displayName = currentUser.instagram_username;
+        } else if (userProfileData && userProfileData.username) {
+            displayName = userProfileData.username;
+        }
         avatarEl.textContent = displayName.charAt(0).toUpperCase();
     }
 }
@@ -4259,9 +4306,44 @@ function resetPostForm() {
     selectedDays.forEach(day => day.classList.remove('selected'));
 }
 
-function initializeNewPostView() {
+async function initializeNewPostView() {
     // Initialize the new post form on first load
     // Do not reinitialize calendar - it's already initialized in setupViewListeners()
+    
+    // Fetch team Instagram data for preview
+    if (currentUser && currentUser.current_team_id) {
+        try {
+            const response = await apiCall(`/team-settings/${currentUser.current_team_id}/instagram`);
+            const data = await response.json();
+            if (response.ok) {
+                currentTeamData = {
+                    username: data.instagram_username,
+                    profilePicture: data.instagram_profile_picture
+                };
+                // Update preview with team data
+                updateProfilePicturePreview();
+                
+                // If profile picture is missing, try to fetch it from Instagram
+                if (!data.instagram_profile_picture && data.instagram_connected) {
+                    try {
+                        const ppResponse = await apiCall(`/team-settings/${currentUser.current_team_id}/instagram/fetch-profile-picture`, {
+                            method: 'POST'
+                        });
+                        const ppData = await ppResponse.json();
+                        if (ppResponse.ok && ppData.instagram_profile_picture) {
+                            currentTeamData.profilePicture = ppData.instagram_profile_picture;
+                            updateProfilePicturePreview();
+                        }
+                    } catch (error) {
+                        console.warn('Failed to fetch profile picture:', error);
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to fetch team Instagram data for preview:', error);
+            // Continue anyway - preview will use fallback
+        }
+    }
 }
 
 // Instagram Functions
