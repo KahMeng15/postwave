@@ -48,7 +48,8 @@ def create_app(config_class=Config):
     jwt = JWTManager(app)
     
     # Create upload folder if it doesn't exist
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    upload_path = app.config['UPLOAD_FOLDER'].lstrip('./')
+    os.makedirs(upload_path, exist_ok=True)
     
     # Register blueprints
     from routes.auth import auth_bp
