@@ -7,20 +7,13 @@ Production-ready web application for scheduling Instagram posts with team collab
 ## Features
 
 - 🔐 Multi-user authentication with JWT
-- 👥 **Team management with role-based access**
-  - Owner: Full team control
-  - Manager: Team management and post approval
-  - Member: Create and schedule posts
-  - Viewer: Read-only access
-- 📱 Instagram Business API integration (per-team credentials)
+- � Instagram Business API integration
 - 📅 Automated post scheduling with background tasks
-- ✅ **Post approval workflow** (optional per team member)
 - 🖼️ Multi-image carousel posts (1-20 images)
 - 👁️ Live Instagram preview before publishing
 - 📊 Dashboard with post statistics
-- 💌 **Email invitations** for team collaboration
 - 🌙 Dark mode toggle
-- 🎯 Drag & drop file upload
+- 🎯 Drag & drop file upload with incremental selection
 - ⌨️ Keyboard shortcuts (Ctrl/Cmd + N/D/P/S, ESC)
 - 📱 Mobile responsive design
 - 🖼️ Auto image optimization (resize to 1080px, compress to 8MB)
@@ -103,7 +96,7 @@ PORT=5500
 
 # File Upload
 MAX_CONTENT_LENGTH=52428800  # 50MB
-UPLOAD_FOLDER=uploads
+UPLOADS_PATH=./uploads
 ```
 
 ### Generate Secure Keys
@@ -133,7 +126,7 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 1. Get access token from [Facebook Graph API Explorer](https://developers.facebook.com/tools/explorer/)
 2. Request permissions: `pages_show_list`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`
 3. During authorization, note your Instagram Business Account ID (displayed below username)
-4. In IG Scheduler Settings, enter:
+4. In Settings, enter:
    - Access Token
    - Instagram Business Account ID
 5. Click "Save & Connect"
@@ -141,7 +134,7 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 #### Method 2: Using Facebook Page ID
 
 1. Get your Facebook Page ID from your Facebook page
-2. In IG Scheduler Settings, enter:
+2. In Settings, enter:
    - Access Token
    - Facebook Page ID
 3. Click "Save & Connect"
@@ -154,74 +147,32 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ## First-Time Setup
 
-On first launch, PostWave displays an interactive 4-step onboarding wizard:
+On first launch, PostWave displays a registration page to create your admin account.
 
-### Step 1: Super Admin Registration
-Create your super admin account (the master administrator for the entire PostWave instance)
-- Username
-- Email  
-- Password
+### Initial Setup
 
-### Step 2: SMTP Configuration (Optional)
-Configure email settings for sending team member invitations:
-- Mail Server (e.g., `smtp.gmail.com`)
-- Port (e.g., `587`)
-- Use TLS (recommended for Gmail)
-- Email credentials
-- From email and name
-
-**Skip option**: Can configure email later in Settings → Email Configuration
-
-### Step 3: Application URL (Optional)
-Set your application's public URL used in email invitation links:
-- Full URL including protocol (e.g., `https://postwave.your-domain.com`)
-
-**Skip option**: Defaults to `http://localhost:5500` for local development
-
-### Step 4: Create First Team
-Create your initial team for managing Instagram accounts:
-- Team Name
-- Team Description (optional)
+1. **Register Admin Account**
+   - Username
+   - Email  
+   - Password
 
 After setup completes, you'll be logged in and can:
 - Access the dashboard
-- Create additional teams
-- Invite team members
+- Create and schedule posts
+- View all scheduled posts
 
 ### Account Access Model
 
-**PostWave uses invite-only accounts:**
-- No public registration available
-- All accounts created via team invitations (after first setup)
-- Super admin creates teams and invites members
-- Members join via email invitation link
-- Settings and configurations managed by super admin in Settings page
-
-### Team Roles & Permissions
-
-**Super Admin**
-- Create and manage teams
-- View and control all teams
-- Edit, approve, or reject posts from any team
-- Manage all users and settings
-- Configure email and application settings
-
-**Team Leader**
-- Manage assigned teams
-- Manage team members (invite, remove, set permissions)
-- Configure team's Instagram API credentials
-- Approve or reject member posts
-- Create and schedule posts
-
-**Team Member**
-- Create draft posts
-- Schedule posts (if enabled)
-- View team posts
-- Submit posts for approval (if required)
+PostWave is a single-user application:
+- One admin account manages all posts
+- No additional user accounts or team management
+- Direct access to all scheduling and management features
 
 ### Email Configuration
 
-For team member invitations to work, configure your SMTP server in Settings → Email Configuration:
+Email configuration is optional. If you want to test the application without SMTP, you can skip this step.
+
+To enable email notifications, configure your SMTP server in Settings:
 
 ```env
 # Gmail Example
@@ -239,36 +190,13 @@ MAIL_FROM_NAME=PostWave
 2. Generate App Password: https://myaccount.google.com/apppasswords
 3. Use the 16-character app password in `MAIL_PASSWORD`
 
-3. Use the 16-character app password in `MAIL_PASSWORD`
-
-### Application Settings
-
-Instead of editing `.env` files, super admins can manage all email and server settings directly from the dashboard:
-
-1. **Access Settings:**
-   - Click your username in the top-right corner
-   - Select "Settings"
-
-2. **Available Settings:**
-   - **Email Configuration** - SMTP server, port, TLS, credentials, from address
-   - **Server Configuration** - Public URL for media access
-
-3. **Features:**
-   - Settings are stored in the database
-   - Environment variables are used as fallback for initialization
-   - Settings changes take effect immediately
-   - Reset to environment values if needed
-
-4. **Security:**
-   - Only super admins can access settings
-   - Password fields are masked in the UI
-   - Database encryption recommended for production
-
 ## Using the App
 
 ### Creating a Post
 1. Click "New Post" or press `Ctrl/Cmd + N`
-2. Drag & drop or select images (up to 10)
+2. Drag & drop or select images (up to 20 images total)
+   - You can add images multiple times - they will be appended to your selection
+   - Click to browse or drag & drop additional files
 3. Write caption (2200 chars max)
 4. Choose schedule time
 5. Preview and click "Schedule Post"
@@ -283,7 +211,7 @@ Instead of editing `.env` files, super admins can manage all email and server se
 ## Project Structure
 
 ```
-igscheduler/
+postwave/
 ├── app.py                    # Main Flask application
 ├── config.py                 # Configuration settings
 ├── models.py                 # Database models
@@ -294,9 +222,12 @@ igscheduler/
 ├── Dockerfile                # Docker image definition
 ├── .env.example              # Example environment file
 ├── static/
-│   ├── index.html           # Single-page app
+│   ├── base.html            # Main HTML template
 │   ├── css/style.css        # Styling (dark mode, responsive)
-│   └── js/app.js            # Frontend logic
+│   └── js/
+│       ├── app.js           # Frontend logic
+│       ├── crypto.js        # Encryption utilities
+│       └── onboarding.js    # Setup wizard
 ├── routes/
 │   ├── auth.py              # Authentication endpoints
 │   ├── posts.py             # Post management endpoints
@@ -304,44 +235,27 @@ igscheduler/
 │   └── users.py             # User management endpoints
 ├── uploads/                 # Media storage
 └── instance/
-    └── scheduler.db         # SQLite database (dev)
+    └── postwave.db          # SQLite database
 ```
 
 ## API Endpoints
 
 ### Authentication
-- `POST /api/auth/register` - Register new user
+- `POST /api/auth/register` - Register admin account
 - `POST /api/auth/login` - Login and get JWT token
 - `POST /api/auth/refresh` - Refresh access token
 - `GET /api/auth/me` - Get current user info
 
-### Teams
-- `POST /api/teams/setup-admin` - Initialize first super admin
-- `GET /api/teams/teams` - List user's teams
-- `POST /api/teams/teams` - Create new team
-- `GET /api/teams/teams/<id>` - Get team details
-- `PUT /api/teams/teams/<id>` - Update team
-- `GET /api/teams/teams/<id>/members` - List team members
-- `PUT /api/teams/teams/<id>/members/<uid>` - Update member permissions
-- `DELETE /api/teams/teams/<id>/members/<uid>` - Remove team member
-- `POST /api/teams/invite` - Invite user to team
-- `POST /api/teams/accept-invite/<token>` - Accept invitation
-
 ### Posts
-- `GET /api/posts` - List user posts
+- `GET /api/posts` - List posts
 - `POST /api/posts` - Create new post
 - `GET /api/posts/<id>` - Get post details
 - `PUT /api/posts/<id>` - Update post
 - `DELETE /api/posts/<id>` - Delete post
-- `GET /api/posts-approval/team/<id>/posts` - List team posts
-- `POST /api/posts-approval/posts/<id>/send-approval` - Send for approval
-- `POST /api/posts-approval/posts/<id>/approve` - Approve post (leader only)
-- `POST /api/posts-approval/posts/<id>/reject` - Reject post (leader only)
 
 ### Instagram Connection
-- `POST /api/instagram/connect` - Connect team's Instagram account
-- `POST /api/instagram/fetch-profile-picture` - Cache profile picture
-- `GET /api/instagram/media` - Get team's media list
+- `POST /api/instagram/connect` - Connect Instagram account
+- `GET /api/instagram/media` - Get media list
 
 ### Users
 - `GET /api/users/profile` - Get user profile
@@ -467,6 +381,13 @@ docker-compose ps
 - Image size: Auto-optimized to 8MB, 1080px
 
 ## Changelog
+
+### v2.1 (January 2026)
+- **Fixed incremental file upload** - Multiple file selections now append instead of replacing
+- **Removed team management UI** - Simplified to single-user application
+- **Consolidated upload configuration** - Unified UPLOAD_FOLDER and UPLOADS_PATH to UPLOADS_PATH
+- **Improved navigation** - Cleaner navbar without team switching
+- **Updated documentation** - Reflect simplified application structure
 
 ### v2.0 (January 2026)
 - **Team Management System**

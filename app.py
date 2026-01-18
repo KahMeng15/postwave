@@ -176,32 +176,78 @@ def check_scheduled_posts():
     """
     Background task to check and publish scheduled posts.
     """
-    from models import Post, User, db
+    from models import Post, User, Team, Settings, db
     from instagram_api import InstagramAPI
     
     with scheduler_app.app_context():
+        scheduler_app.logger.info('=' * 80)
+        scheduler_app.logger.info('Starting check_scheduled_posts task')
+        scheduler_app.logger.info('=' * 80)
+        
         # Find posts that are scheduled and due
         # Use naive datetime comparison (both stored as local time)
         now = datetime.now()
+        scheduler_app.logger.info(f'Current time: {now}')
+        
         posts = Post.query.filter(
             Post.status == 'scheduled',
             Post.scheduled_time <= now
         ).all()
         
+        scheduler_app.logger.info(f'Found {len(posts)} scheduled posts to process')
+        
+        if not posts:
+            scheduler_app.logger.info('No scheduled posts found. Exiting.')
+            return
+        
         ig_api = InstagramAPI()
         
         for post in posts:
             try:
+                scheduler_app.logger.info(f'\n--- Processing Post {post.id} ---')
+                scheduler_app.logger.info(f'Post scheduled time: {post.scheduled_time}')
+                scheduler_app.logger.info(f'Post caption length: {len(post.caption or "")}')
+                scheduler_app.logger.info(f'Post media count: {len(post.media)}')
+                
                 # Update status immediately to prevent duplicate publishing attempts
                 post.status = 'publishing'
                 db.session.commit()
+                scheduler_app.logger.info(f'Updated post {post.id} status to publishing')
                 
                 user = User.query.get(post.user_id)
                 
-                if not user.instagram_access_token or not user.instagram_account_id:
+                if not user:
+                    post.status = 'failed'
+                    post.error_message = 'User not found'
+                    db.session.commit()
+                    scheduler_app.logger.error(f'User {post.user_id} not found for post {post.id}')
+                    continue
+                
+                # Get user's team (for team-based apps)
+                if not hasattr(user, 'team_memberships') or not user.team_memberships:
+                    post.status = 'failed'
+                    post.error_message = 'User is not a member of any team'
+                    db.session.commit()
+                    scheduler_app.logger.error(f'User {user.id} is not a member of any team')
+                    continue
+                
+                team = user.team_memberships[0].team
+                if not team:
+                    post.status = 'failed'
+                    post.error_message = 'Team not found'
+                    db.session.commit()
+                    scheduler_app.logger.error(f'Team not found for user {user.id}')
+                    continue
+                
+                scheduler_app.logger.info(f'Processing post {post.id} for user {user.id} ({user.email}) in team {team.id} ({team.name})')
+                scheduler_app.logger.info(f'Team Instagram Account ID: {team.instagram_account_id}')
+                scheduler_app.logger.info(f'Team Instagram Access Token Present: {bool(team.instagram_access_token)}')
+                
+                if not team.instagram_access_token or not team.instagram_account_id:
                     post.status = 'failed'
                     post.error_message = 'Instagram not connected'
                     db.session.commit()
+                    scheduler_app.logger.error(f'Instagram not connected for team {team.id}. Token: {bool(team.instagram_access_token)}, Account ID: {bool(team.instagram_account_id)}')
                     continue
                 
                 # Skip posts without media
@@ -209,10 +255,13 @@ def check_scheduled_posts():
                     post.status = 'failed'
                     post.error_message = 'No media files attached'
                     db.session.commit()
+                    scheduler_app.logger.error(f'Post {post.id} has no media files')
                     continue
                 
-                # Get the public host URL
-                app_host = os.getenv('APP_HOST', 'http://127.0.0.1:5500')
+                # Get the public host URL from settings, fallback to environment variable
+                domain_setting = Settings.query.filter_by(key='app_domain').first()
+                app_host = domain_setting.value if domain_setting else os.getenv('APP_HOST', 'http://127.0.0.1:5500')
+                scheduler_app.logger.info(f'Using app host: {app_host}')
                 
                 # Prepare publicly accessible media URLs
                 media_urls = [
@@ -221,23 +270,26 @@ def check_scheduled_posts():
                 ]
                 
                 scheduler_app.logger.info(f'Publishing post {post.id} with {len(media_urls)} media items')
+                scheduler_app.logger.info(f'Media URLs: {media_urls}')
                 
                 # Publish to Instagram using URLs
                 instagram_post_id = ig_api.publish_post(
-                    user.instagram_access_token,
-                    user.instagram_account_id,
+                    team.instagram_access_token,
+                    team.instagram_account_id,
                     media_urls,
                     post.caption
                 )
+                
+                scheduler_app.logger.info(f'Instagram API returned post ID: {instagram_post_id}')
                 
                 post.status = 'published'
                 post.instagram_post_id = instagram_post_id
                 post.published_at = datetime.now()
                 post.error_message = None
-                scheduler_app.logger.info(f'Successfully published post {post.id} to Instagram')
+                scheduler_app.logger.info(f'Successfully published post {post.id} to Instagram with ID: {instagram_post_id}')
                 
             except Exception as e:
-                scheduler_app.logger.error(f'Failed to publish post {post.id}: {str(e)}')
+                scheduler_app.logger.error(f'Failed to publish post {post.id}: {str(e)}', exc_info=True)
                 post.status = 'failed'
                 post.error_message = str(e)
                 db.session.commit()
@@ -245,6 +297,10 @@ def check_scheduled_posts():
             else:
                 # Only commit if no exception occurred
                 db.session.commit()
+        
+        scheduler_app.logger.info('=' * 80)
+        scheduler_app.logger.info('Finished check_scheduled_posts task')
+        scheduler_app.logger.info('=' * 80)
 
 
 def cleanup_expired_cache():

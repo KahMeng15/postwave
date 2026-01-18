@@ -72,7 +72,7 @@ def connect_instagram():
         
         # Get account info
         logger.debug('Retrieving account information...')
-        account_info = ig_api.get_account_info(token_data['access_token'], ig_account_id)
+        account_info = ig_api.get_account_info(ig_account_id, token_data['access_token'])
         
         # Update user
         user.instagram_account_id = ig_account_id
@@ -192,8 +192,8 @@ def instagram_status():
     try:
         # Try to get account info to verify connection
         account_info = ig_api.get_account_info(
-            user.instagram_access_token,
-            user.instagram_account_id
+            user.instagram_account_id,
+            user.instagram_access_token
         )
         
         return jsonify({
@@ -227,12 +227,11 @@ def get_instagram_posts():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
-    # Get user's first team membership
-    team_member = user.team_memberships[0] if user.team_memberships else None
-    if not team_member:
-        return jsonify({'error': 'No team membership found'}), 400
+    # Get user's first team (for team-based apps)
+    if not hasattr(user, 'team_memberships') or not user.team_memberships:
+        return jsonify({'error': 'User is not a member of any team'}), 400
     
-    team = team_member.team
+    team = user.team_memberships[0].team
     if not team:
         return jsonify({'error': 'Team not found'}), 404
     
@@ -403,8 +402,8 @@ def fetch_profile_picture():
         
         # Get account info which includes profile_picture_url
         account_info = ig_api.get_account_info(
-            user.instagram_access_token,
-            user.instagram_account_id
+            user.instagram_account_id,
+            user.instagram_access_token
         )
         
         profile_picture_url = account_info.get('profile_picture_url')

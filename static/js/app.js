@@ -90,7 +90,7 @@ function handleRoute(path, pushState = false) {
     
     // Define route mappings
     const authRoutes = ['login', 'setup'];
-    const dashboardRoutes = ['dashboard', 'posts', 'newPost', 'settings', 'teams'];
+    const dashboardRoutes = ['dashboard', 'posts', 'newPost', 'settings'];
     
     // Handle root path - check if setup is needed
     if (cleanPath === '') {
@@ -334,12 +334,6 @@ function setupNavbarListeners() {
     }
     if (navNewPost) {
         navNewPost.addEventListener('click', () => navigateTo('/newPost'));
-    }
-    
-    // Teams button
-    const navTeams = document.getElementById('navTeams');
-    if (navTeams) {
-        navTeams.addEventListener('click', () => navigateTo('/teams'));
     }
 }
 
@@ -2743,18 +2737,27 @@ async function fetchCurrentUser() {
 }
 
 function updateProfilePicturePreview() {
-    if (!userProfileData) return;
+    if (!currentUser) return;
     
-    // Update username in preview
+    // Update username in preview - always use Instagram username when available
     const previewUsername = document.getElementById('previewUsername');
-    if (previewUsername && userProfileData.username) {
-        previewUsername.textContent = userProfileData.username;
+    if (previewUsername) {
+        if (currentUser.instagram_username) {
+            previewUsername.textContent = currentUser.instagram_username;
+            // Also update the cache for consistency
+            if (!userProfileData) userProfileData = {};
+            userProfileData.username = currentUser.instagram_username;
+        } else if (userProfileData && userProfileData.username) {
+            previewUsername.textContent = userProfileData.username;
+        } else {
+            previewUsername.textContent = 'username';
+        }
     }
     
     const avatarEl = document.querySelector('.ig-avatar');
     if (!avatarEl) return;
     
-    if (userProfileData.profilePicture) {
+    if (userProfileData && userProfileData.profilePicture) {
         avatarEl.style.backgroundImage = `url('${userProfileData.profilePicture}')`;
         avatarEl.style.backgroundSize = 'cover';
         avatarEl.style.backgroundPosition = 'center';
@@ -2762,9 +2765,8 @@ function updateProfilePicturePreview() {
     } else {
         // Fallback to initial-based avatar
         avatarEl.style.backgroundImage = 'none';
-        if (userProfileData.username) {
-            avatarEl.textContent = userProfileData.username.charAt(0).toUpperCase();
-        }
+        const displayName = (currentUser && currentUser.instagram_username) || (userProfileData && userProfileData.username) || 'U';
+        avatarEl.textContent = displayName.charAt(0).toUpperCase();
     }
 }
 
@@ -3010,39 +3012,46 @@ async function loadAllPosts() {
             try {
                 const igResponse = await apiCall('/instagram/posts?limit=25');
                 const igData = await igResponse.json();
-                fromCache = igData.from_cache || false;
                 
-                // Cache posts on client side with encryption
-                if (encryptionKey && igData.posts && typeof EncryptedCacheManager !== 'undefined') {
-                    try {
-                        await EncryptedCacheManager.cachePostsBatch(igData.posts, encryptionKey);
-                    } catch (e) {
-                        console.warn('Failed to cache posts locally:', e);
+                // Check if the response was successful
+                if (!igResponse.ok) {
+                    console.warn('Instagram posts endpoint returned error:', igData.error || 'Unknown error');
+                    console.warn('User may not have Instagram connected');
+                } else if (igData.posts && Array.isArray(igData.posts)) {
+                    fromCache = igData.from_cache || false;
+                    
+                    // Cache posts on client side with encryption
+                    if (encryptionKey && igData.posts && typeof EncryptedCacheManager !== 'undefined') {
+                        try {
+                            await EncryptedCacheManager.cachePostsBatch(igData.posts, encryptionKey);
+                        } catch (e) {
+                            console.warn('Failed to cache posts locally:', e);
+                        }
                     }
+                    
+                    // Get list of instagram_post_ids from PostWave posts to avoid duplicates
+                    const postwaveInstagramIds = allPosts
+                        .filter(p => p.instagram_post_id)
+                        .map(p => p.instagram_post_id);
+                    
+                    // Filter out Instagram posts that are already in PostWave
+                    const igPosts = igData.posts
+                        .filter(post => !postwaveInstagramIds.includes(post.id))
+                        .map(post => {
+                            const imageUrl = post.cached_image_url || post.media_url;
+                            return {
+                                id: post.id,
+                                caption: post.caption,
+                                media: [{ id: post.id, url: imageUrl, original_url: post.media_url }],
+                                status: 'published',
+                                published_at: post.timestamp,
+                                permalink: post.permalink,
+                                source: 'instagram',
+                                sortTime: new Date(post.timestamp)
+                            };
+                        });
+                    allPosts = [...allPosts, ...igPosts];
                 }
-                
-                // Get list of instagram_post_ids from PostWave posts to avoid duplicates
-                const postwaveInstagramIds = allPosts
-                    .filter(p => p.instagram_post_id)
-                    .map(p => p.instagram_post_id);
-                
-                // Filter out Instagram posts that are already in PostWave
-                const igPosts = igData.posts
-                    .filter(post => !postwaveInstagramIds.includes(post.id))
-                    .map(post => {
-                        const imageUrl = post.cached_image_url || post.media_url;
-                        return {
-                            id: post.id,
-                            caption: post.caption,
-                            media: [{ id: post.id, url: imageUrl, original_url: post.media_url }],
-                            status: 'published',
-                            published_at: post.timestamp,
-                            permalink: post.permalink,
-                            source: 'instagram',
-                            sortTime: new Date(post.timestamp)
-                        };
-                    });
-                allPosts = [...allPosts, ...igPosts];
             } catch (igError) {
                 console.log('Could not load Instagram posts:', igError);
             }
@@ -3089,7 +3098,7 @@ async function loadAllPosts() {
                             </div>
                         </div>
                         <div class="post-meta">
-                            <span>${formatDateTime(post.scheduled_time || post.published_at)}</span>
+                            <div style="line-height: 1.4;">${formatDateTime(post.scheduled_time || post.published_at)}</div>
                             <span class="post-status status-${post.status}">${post.status}</span>
                         </div>
                         <div class="post-actions">
@@ -3156,9 +3165,9 @@ async function viewPost(postId) {
                 
                 <div>
                     <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem;">Media (${post.media.length})</div>
-                    <div class="media-preview">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; margin-top: 0.5rem;">
                         ${post.media.map(m => `
-                            <img src="/api/posts/media/${m.id}" alt="Media">
+                            <img src="/api/posts/media/${m.id}" alt="Media" style="width: 100%; height: 150px; object-fit: contain; border-radius: 0.5rem; border: 1px solid var(--border-color);">
                         `).join('')}
                     </div>
                 </div>
@@ -3279,7 +3288,7 @@ async function loadInstagramPosts() {
                             ${post.caption ? post.caption.substring(0, 150) + (post.caption.length > 150 ? '...' : '') : 'No caption'}
                         </div>
                         <div class="post-meta">
-                            <span>📅 ${formatDateTime(post.timestamp)}</span>
+                            <div style="line-height: 1.4;">📅 ${formatDateTime(post.timestamp)}</div>
                             ${post.like_count !== undefined ? `<span>❤️ ${post.like_count}</span>` : ''}
                             ${post.comments_count !== undefined ? `<span>💬 ${post.comments_count}</span>` : ''}
                         </div>
@@ -3344,8 +3353,9 @@ async function refreshInstagramPosts() {
 async function handleMediaSelect(e) {
     const files = Array.from(e.target.files);
     
-    if (files.length > 20) {
-        showToast('Maximum 20 images allowed', 'error');
+    // Check total count including previously selected files
+    if (selectedFiles.length + files.length > 20) {
+        showToast(`Maximum 20 images allowed. You already have ${selectedFiles.length} selected.`, 'error');
         e.target.value = '';
         return;
     }
@@ -3371,9 +3381,13 @@ async function handleMediaSelect(e) {
         }
     }
     
-    selectedFiles = processedFiles;
+    // Append to existing selected files instead of replacing
+    selectedFiles = selectedFiles.concat(processedFiles);
     displayMediaPreview();
     updatePreview();
+    
+    // Clear the input value so same file can be selected again
+    e.target.value = '';
 }
 
 // Convert aspect ratio format from "1:1" to "1/1" or decimal
@@ -3715,8 +3729,17 @@ function updatePreview() {
     }
     
     if (scheduledDateTime) {
-        const formattedDate = formatDateTime(scheduledDateTime.toISOString());
-        previewDate.textContent = `Scheduled: ${formattedDate}`;
+        // Format as naive ISO string for correct display
+        const year = scheduledDateTime.getFullYear();
+        const month = String(scheduledDateTime.getMonth() + 1).padStart(2, '0');
+        const day = String(scheduledDateTime.getDate()).padStart(2, '0');
+        const hours = String(scheduledDateTime.getHours()).padStart(2, '0');
+        const minutes = String(scheduledDateTime.getMinutes()).padStart(2, '0');
+        const seconds = String(scheduledDateTime.getSeconds()).padStart(2, '0');
+        const naiveISOString = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+        
+        const formattedDate = formatDateTime(naiveISOString);
+        previewDate.innerHTML = `Scheduled: ${formattedDate}`;
     } else {
         previewDate.textContent = 'Scheduled: --';
     }
@@ -4109,7 +4132,17 @@ async function handleCreatePost(e, status = 'scheduled') {
     // Apply crops to files that need cropping
     const formData = new FormData();
     formData.append('caption', caption);
-    formData.append('scheduled_time', scheduledDateTime.toISOString());
+    
+    // Send scheduled_time as naive ISO string (local time without UTC conversion)
+    const year = scheduledDateTime.getFullYear();
+    const month = String(scheduledDateTime.getMonth() + 1).padStart(2, '0');
+    const day = String(scheduledDateTime.getDate()).padStart(2, '0');
+    const hours = String(scheduledDateTime.getHours()).padStart(2, '0');
+    const minutes = String(scheduledDateTime.getMinutes()).padStart(2, '0');
+    const seconds = String(scheduledDateTime.getSeconds()).padStart(2, '0');
+    const naiveISOString = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+    
+    formData.append('scheduled_time', naiveISOString);
     formData.append('status', status);
     formData.append('aspect_ratio', aspectRatio);
     
@@ -4277,6 +4310,13 @@ async function connectInstagram(e) {
         if (response.ok) {
             showToast(`✅ Instagram connected successfully! @${data.instagram_username}`, 'success');
             document.getElementById('instagramConfigForm').reset();
+            
+            // Refresh current user data to update preview with Instagram username
+            await fetchCurrentUser();
+            
+            // Update preview with new Instagram username
+            updateProfilePicturePreview();
+            
             loadDashboard();
         } else {
             // Get error message
@@ -4490,15 +4530,60 @@ async function changePassword(e) {
 
 // Utility Functions
 function formatDateTime(isoString) {
-    const date = new Date(isoString);
-    return date.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-    });
+    if (!isoString) {
+        return 'Invalid Date';
+    }
+    
+    try {
+        // Try to parse the string directly (handles both formats)
+        let date;
+        
+        // If string contains timezone info (e.g., +0000 or Z), it's already UTC-aware
+        if (isoString.includes('+') || isoString.includes('Z')) {
+            // Instagram format with timezone - parse as UTC
+            date = new Date(isoString);
+        } else {
+            // PostWave format - naive ISO string, parse as local time
+            const cleanString = isoString.split('.')[0]; // Remove milliseconds
+            const [datePart, timePart] = cleanString.split('T');
+            
+            if (!datePart || !timePart) {
+                throw new Error('Invalid datetime format');
+            }
+            
+            const [year, month, day] = datePart.split('-').map(Number);
+            const [hour, minute, second] = timePart.split(':').map(Number);
+            
+            // Create date in local timezone
+            date = new Date(year, month - 1, day, hour, minute, second);
+        }
+        
+        // Check if date is valid
+        if (isNaN(date.getTime())) {
+            return 'Invalid Date';
+        }
+        
+        const timeStr = date.toLocaleString(undefined, {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+        
+        const tzStr = date.toLocaleString(undefined, {
+            timeZoneName: 'short'
+        }).split(' ').pop();
+        
+        const dateStr = date.toLocaleString(undefined, {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric'
+        });
+        
+        return `${timeStr} ${tzStr}<br>${dateStr}`;
+    } catch (error) {
+        console.error('Error formatting date:', isoString, error);
+        return 'Invalid Date';
+    }
 }
 
 function showToast(message, type = 'info') {

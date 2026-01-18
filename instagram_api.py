@@ -3,6 +3,7 @@ import requests
 from datetime import datetime, timedelta
 from config import Config
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -334,19 +335,35 @@ class InstagramAPI:
     def publish_media(self, access_token, ig_account_id, container_id):
         """
         Publish a media container to Instagram.
+        Instagram's media containers are created asynchronously, so we need to retry
+        with exponential backoff if the media isn't ready yet.
         """
         url = f"{self.base_url}/{ig_account_id}/media_publish"
         
-        params = {
-            'creation_id': container_id,
-            'access_token': access_token
-        }
-        
-        response = requests.post(url, params=params)
-        if response.status_code == 200:
-            return response.json().get('id')
-        else:
-            raise Exception(f"Failed to publish media: {response.json()}")
+        max_retries = 10
+        for attempt in range(max_retries):
+            params = {
+                'creation_id': container_id,
+                'access_token': access_token
+            }
+            
+            response = requests.post(url, params=params)
+            
+            if response.status_code == 200:
+                return response.json().get('id')
+            
+            error_data = response.json()
+            error_code = error_data.get('error', {}).get('code')
+            
+            # Error 9007 means "Media ID is not available" - need to wait and retry
+            if error_code == 9007 and attempt < max_retries - 1:
+                wait_time = min(2 ** attempt, 30)  # Exponential backoff, max 30 seconds
+                logger.warning(f"Media not ready yet, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            
+            # Other errors should fail immediately
+            raise Exception(f"Failed to publish media: {error_data}")
     
     def publish_post(self, access_token, ig_account_id, media_urls, caption=None):
         """

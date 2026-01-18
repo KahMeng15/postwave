@@ -240,16 +240,7 @@ def publish_post_now(post_id):
     
     user = User.query.get(current_user_id)
     
-    # Get user's first team membership
-    team_member = user.team_memberships[0] if user.team_memberships else None
-    if not team_member:
-        return jsonify({'error': 'No team membership found'}), 400
-    
-    team = team_member.team
-    if not team:
-        return jsonify({'error': 'Team not found'}), 404
-    
-    if not team.instagram_access_token or not team.instagram_account_id:
+    if not user.instagram_access_token or not user.instagram_account_id:
         return jsonify({'error': 'Instagram not connected'}), 400
     
     from instagram_api import InstagramAPI
@@ -263,8 +254,8 @@ def publish_post_now(post_id):
         ]
         
         instagram_post_id = ig_api.publish_post(
-            team.instagram_access_token,
-            team.instagram_account_id,
+            user.instagram_access_token,
+            user.instagram_account_id,
             media_urls,
             post.caption
         )
@@ -302,10 +293,25 @@ def serve_media(media_id):
     if not media:
         return jsonify({'error': 'Media not found'}), 404
     
+    # Determine MIME type based on file extension
+    ext = media.filename.rsplit('.', 1)[1].lower() if '.' in media.filename else ''
+    mime_type_map = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'mp4': 'video/mp4',
+        'mov': 'video/quicktime',
+        'webm': 'video/webm',
+    }
+    mime_type = mime_type_map.get(ext, 'application/octet-stream')
+    
     return send_from_directory(
         Config.UPLOAD_FOLDER,
         media.filename,
-        as_attachment=False
+        as_attachment=False,
+        mimetype=mime_type
     )
 
 
