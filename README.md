@@ -2,8 +2,6 @@
 
 Production-ready web application for scheduling Instagram posts with team collaboration and role-based access control. Built with Python Flask and vanilla JavaScript.
 
-**📚 Full Documentation**: See [DOCUMENTATION.md](DOCUMENTATION.md) for complete setup guide, API reference, architecture, and troubleshooting.
-
 ## Features
 
 - 🔐 Multi-user authentication with JWT
@@ -12,13 +10,7 @@ Production-ready web application for scheduling Instagram posts with team collab
 - 🖼️ Multi-image carousel posts (1-20 images)
 - 👁️ Live Instagram preview before publishing
 - 📊 Dashboard with post statistics
-- 🌙 Dark mode toggle
-- 🎯 Drag & drop file upload with incremental selection
-- ⌨️ Keyboard shortcuts (Ctrl/Cmd + N/D/P/S, ESC)
-- 📱 Mobile responsive design
-- 🖼️ Auto image optimization (resize to 1080px, compress to 8MB)
 - 🐳 Docker deployment support
-- 🔒 Production-ready security
 
 ## Quick Start
 
@@ -51,7 +43,7 @@ cp .env.example .env
 # Run the app
 python app.py
 
-# Open http://localhost:5500
+# Open http://localhost:5500 in your browser
 ```
 
 ## Setup & Configuration
@@ -115,9 +107,31 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 1. **Instagram Business or Creator Account**
    - Go to Instagram Settings → Account → Switch to Professional Account
+   - Note your Instagram Business Account ID (visible in Settings)
 
-2. **Facebook App with Instagram API Access**
-   - Instagram Basic Display and Instagram Content Publishing permissions required
+2. **Facebook Developer Account**
+   - Create a free account at [developers.facebook.com](https://developers.facebook.com)
+   - Create a new Facebook App
+   - Add "Instagram Graph API" product to your app
+   - Request permissions: `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`
+
+### Getting Your Credentials
+
+1. **Find Your App ID & Secret**
+   - In Facebook App Dashboard → Settings → Basic
+   - Copy your App ID and App Secret
+
+2. **Generate Access Token**
+   - Go to [Facebook Graph API Explorer](https://developers.facebook.com/tools/explorer/)
+   - Select your app from the dropdown
+   - Click "Generate Access Token"
+   - Select permissions: `pages_show_list`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`
+   - Click "Generate"
+   - Copy the long token string
+
+3. **Find Your Instagram Business Account ID**
+   - In Graph API Explorer, run query: `me/connected_instagram_business_account?fields=ig_user_id,name`
+   - Copy the `ig_user_id` value (usually a long number)
 
 ### Connection Methods
 
@@ -139,11 +153,34 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
    - Facebook Page ID
 3. Click "Save & Connect"
 
+### Converting Tokens to Long-Lived Access
+
+Short-lived tokens expire in hours. To create a long-lived token (60 days):
+
+1. In Graph API Explorer, run: `oauth/access_token?grant_type=fb_exchange_token&client_id=YOUR_APP_ID&client_secret=YOUR_APP_SECRET&access_token=SHORT_LIVED_TOKEN`
+2. Replace the variables with your actual values
+3. Copy the new token and update your settings
+
 ### Troubleshooting
 
-**"No Instagram Business Account found"**: Use Method 1 with Instagram Business Account ID
+**"No Instagram Business Account found"**: 
+- Ensure you're using Method 1 with Instagram Business Account ID (not Creator Account ID)
+- Verify your Instagram account is a Business Account (not Creator)
+- Check that you've linked your Facebook Page to Instagram
 
-**"Access token has expired"**: Generate a new access token from Graph API Explorer. App will auto-convert short-lived tokens to long-lived tokens (~60 days)
+**"Access token has expired"**: 
+- Generate a new access token from Graph API Explorer
+- Use the token conversion method above for long-lived tokens (~60 days)
+- PostWave will auto-refresh tokens if configured to do so
+
+**"Permission denied" or "Insufficient permissions"**:
+- Ensure all required permissions are granted during token generation
+- Regenerate token with: `pages_show_list`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`
+- Verify your Facebook Page is properly linked to Instagram
+
+**"Invalid Media URLs"**:
+- Ensure all image URLs are publicly accessible (not on private networks)
+- Images should be hosted on public servers or use PostWave's upload feature
 
 ## First-Time Setup
 
@@ -163,16 +200,19 @@ After setup completes, you'll be logged in and can:
 
 ### Account Access Model
 
-PostWave is a single-user application:
-- One admin account manages all posts
-- No additional user accounts or team management
-- Direct access to all scheduling and management features
+PostWave supports multiple access models:
+- **Single-user mode**: One admin account manages all posts
+- **Team collaboration**: Multi-team support with role-based access control (Super Admin, Team Leader, Team Member)
+- **Post approval workflow**: Optional approval requirements for team members
+- **Team invitations**: Email-based invitations with 7-day expiration
 
 ### Email Configuration
 
-Email configuration is optional. If you want to test the application without SMTP, you can skip this step.
+Email configuration is **optional** for basic functionality. However, it's **required** if you want to:
+- Send team member invitations
+- Enable automated notifications
 
-To enable email notifications, configure your SMTP server in Settings:
+To enable email features, configure your SMTP server in Settings:
 
 ```env
 # Gmail Example
@@ -300,7 +340,7 @@ JWT_SECRET_KEY=<very-long-random-string>
 For SQLite (development):
 ```bash
 # Backup database
-cp instance/scheduler.db backups/scheduler.db.backup
+cp instance/postwave.db backups/postwave.db.backup
 ```
 
 For PostgreSQL (production):
