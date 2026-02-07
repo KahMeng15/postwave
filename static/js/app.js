@@ -19,6 +19,15 @@ let cropData = {}; // Store crop data for images
 let invitationToken = null; // Store invitation token from URL query parameter
 let invitationDetailsLoaded = false; // Track if invitation details have been loaded
 
+// Pagination state for posts view
+let postsState = {
+    currentPage: 1,
+    postsPerPage: 25,
+    allPosts: [],
+    totalPages: 1,
+    fromCache: false
+};
+
 // Global encryption key for client-side cache
 let encryptionKey = null;
 
@@ -3027,7 +3036,7 @@ async function loadUpcomingPosts() {
     }
 }
 
-// Posts Functions - Combined View
+// Posts Functions - Combined View with Pagination
 async function loadAllPosts() {
     const container = document.getElementById('postsContainer');
     const loading = document.getElementById('postsLoading');
@@ -3038,6 +3047,8 @@ async function loadAllPosts() {
         return;
     }
     
+    // Reset pagination to page 1 when filter changes
+    postsState.currentPage = 1;
     const statusFilter = statusFilterEl.value;
     
     loading.style.display = 'block';
@@ -3059,11 +3070,19 @@ async function loadAllPosts() {
             }));
         }
         
-        // Load Instagram posts with caching
+        // Load Instagram posts with caching - fetch up to 100 posts
         if (!statusFilter || statusFilter === 'instagram' || statusFilter === 'published') {
             try {
-                const igResponse = await apiCall('/instagram/posts?limit=25');
-                const igData = await igResponse.json();
+                // First try to fetch from API (should be fresh on first load)
+                let igResponse = await apiCall('/instagram/posts?limit=100');
+                let igData = await igResponse.json();
+                
+                // If we get an empty response or error, try refreshing
+                if (!igResponse.ok || !igData.posts || igData.posts.length === 0) {
+                    console.log('First attempt returned no posts, trying with refresh...');
+                    igResponse = await apiCall('/instagram/posts?limit=100&refresh=true');
+                    igData = await igResponse.json();
+                }
                 
                 // Check if the response was successful
                 if (!igResponse.ok) {
@@ -3112,82 +3131,165 @@ async function loadAllPosts() {
         // Sort by time (most recent first)
         allPosts.sort((a, b) => b.sortTime - a.sortTime);
         
+        // Store in pagination state
+        postsState.allPosts = allPosts;
+        postsState.fromCache = fromCache;
+        postsState.totalPages = Math.ceil(allPosts.length / postsState.postsPerPage) || 1;
+        
         loading.style.display = 'none';
         
         if (allPosts.length === 0) {
             container.innerHTML = '<p class="text-muted">No posts found.</p>';
+            document.getElementById('paginationControls').style.display = 'none';
+            document.getElementById('paginationInfo').textContent = '';
             return;
         }
         
-        // Add cache note if showing Instagram posts
-        let cacheNote = '';
-        if (fromCache && (!statusFilter || statusFilter === 'instagram' || statusFilter === 'published')) {
-            cacheNote = `<div class="cache-info" style="padding: 0.75rem; margin-bottom: 1rem; background: #E0F2FE; border-left: 4px solid #0284C7; border-radius: 4px; grid-column: 1 / -1;">
-                <span style="color: #0C4A6E; font-size: 0.875rem;">📦 Instagram posts loaded from cache (updated ${new Date().toLocaleTimeString()})</span>
-            </div>`;
+        // Always show pagination controls for better UX
+        if (allPosts.length > 0) {
+            document.getElementById('paginationControls').style.display = 'flex';
+        } else {
+            document.getElementById('paginationControls').style.display = 'none';
         }
         
-        container.innerHTML = cacheNote + allPosts.map(post => {
-            const isInstagram = post.source === 'instagram';
-            const cardClass = isInstagram ? 'post-card-instagram' : `post-card-${post.status}`;
-            
-            return `
-                <div class="post-card ${cardClass}">
-                    ${post.media && post.media.length > 0 ? `
-                        <img src="${isInstagram ? post.media[0].url : `/api/posts/media/${post.media[0].id}`}" 
-                             class="post-thumbnail" 
-                             alt="Post thumbnail"
-                             onerror="this.src='${isInstagram ? post.media[0].original_url : ''}'">
-                    ` : ''}
-                    <div class="post-content">
-                        <div class="post-caption">
-                            <div class="post-caption-text">
-                                ${post.caption || 'No caption'}
-                            </div>
-                            <div class="post-indicators">
-                                ${post.status === 'published' && post.instagram_post_id ? '<div class="post-indicator indicator-postwave" title="Published by PostWave">✓</div>' : ''}
-                                ${post.status === 'failed' ? '<div class="post-indicator indicator-failed" title="Failed to publish">!</div>' : ''}
-                            </div>
-                        </div>
-                        <div class="post-meta">
-                            <div style="line-height: 1.4;">${formatDateTime(post.scheduled_time || post.published_at)}</div>
-                            <span class="post-status status-${post.status}">${post.status}</span>
-                        </div>
-                        <div class="post-actions">
-                            ${isInstagram ? `
-                                <a href="${post.permalink}" target="_blank" class="btn btn-sm btn-secondary">
-                                    View
-                                </a>
-                            ` : `
-                                <button class="btn btn-sm btn-secondary" onclick="viewPost(${post.id})">
-                                    View
-                                </button>
-                                ${(post.status === 'scheduled' || post.status === 'draft' || post.status === 'failed') ? `
-                                    <button class="btn btn-sm btn-primary" onclick="editPost(${post.id})">
-                                        Edit
-                                    </button>
-                                ` : ''}
-                                ${(post.status === 'scheduled' || post.status === 'failed') ? `
-                                    <button class="btn btn-sm btn-success" onclick="postNow(${post.id})">
-                                        Post Now
-                                    </button>
-                                ` : ''}
-                                ${post.status !== 'published' ? `
-                                    <button class="btn btn-sm btn-danger" onclick="deletePost(${post.id})">
-                                        Delete
-                                    </button>
-                                ` : ''}
-                            `}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
+        // Render the current page
+        renderPostsPage();
     } catch (error) {
         loading.style.display = 'none';
         console.error('Failed to load posts:', error);
         container.innerHTML = '<p class="text-muted">Failed to load posts. Please try again.</p>';
     }
+}
+
+function renderPostsPage() {
+    const container = document.getElementById('postsContainer');
+    const startIdx = (postsState.currentPage - 1) * postsState.postsPerPage;
+    const endIdx = startIdx + postsState.postsPerPage;
+    const pagePostsData = postsState.allPosts.slice(startIdx, endIdx);
+    
+    // Update pagination info
+    const totalShown = Math.min(endIdx, postsState.allPosts.length);
+    const paginationInfo = document.getElementById('paginationInfo');
+    if (paginationInfo) {
+        paginationInfo.textContent = `Showing ${startIdx + 1}-${totalShown} of ${postsState.allPosts.length} posts`;
+    }
+    
+    // Update pagination controls
+    document.getElementById('totalPagesSpan').textContent = postsState.totalPages;
+    document.getElementById('currentPageInput').value = postsState.currentPage;
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextBtn = document.getElementById('nextPageBtn');
+    if (prevBtn) prevBtn.disabled = postsState.currentPage === 1;
+    if (nextBtn) nextBtn.disabled = postsState.currentPage === postsState.totalPages;
+    
+    // Add cache note if showing Instagram posts
+    let cacheNote = '';
+    if (postsState.fromCache) {
+        cacheNote = `<div class="cache-info" style="padding: 0.75rem; margin-bottom: 1rem; background: #E0F2FE; border-left: 4px solid #0284C7; border-radius: 4px; grid-column: 1 / -1;">
+            <span style="color: #0C4A6E; font-size: 0.875rem;">📦 Instagram posts loaded from cache (updated ${new Date().toLocaleTimeString()})</span>
+        </div>`;
+    }
+    
+    container.innerHTML = cacheNote + pagePostsData.map(post => {
+        const isInstagram = post.source === 'instagram';
+        const cardClass = isInstagram ? 'post-card-instagram' : `post-card-${post.status}`;
+        
+        return `
+            <div class="post-card ${cardClass}">
+                ${post.media && post.media.length > 0 ? `
+                    <img src="${isInstagram ? post.media[0].url : `/api/posts/media/${post.media[0].id}`}" 
+                         class="post-thumbnail" 
+                         alt="Post thumbnail"
+                         onerror="this.src='${isInstagram ? post.media[0].original_url : ''}'">
+                ` : ''}
+                <div class="post-content">
+                    <div class="post-caption">
+                        <div class="post-caption-text">
+                            ${post.caption || 'No caption'}
+                        </div>
+                        <div class="post-indicators">
+                            ${post.status === 'published' && post.instagram_post_id ? '<div class="post-indicator indicator-postwave" title="Published by PostWave">✓</div>' : ''}
+                            ${post.status === 'failed' ? '<div class="post-indicator indicator-failed" title="Failed to publish">!</div>' : ''}
+                        </div>
+                    </div>
+                    <div class="post-meta">
+                        <div style="line-height: 1.4;">${formatDateTime(post.scheduled_time || post.published_at)}</div>
+                        <span class="post-status status-${post.status}">${post.status}</span>
+                    </div>
+                    <div class="post-actions">
+                        ${isInstagram ? `
+                            <a href="${post.permalink}" target="_blank" class="btn btn-sm btn-secondary">
+                                View
+                            </a>
+                        ` : `
+                            <button class="btn btn-sm btn-secondary" onclick="viewPost(${post.id})">
+                                View
+                            </button>
+                            ${(post.status === 'scheduled' || post.status === 'draft' || post.status === 'failed') ? `
+                                <button class="btn btn-sm btn-primary" onclick="editPost(${post.id})">
+                                    Edit
+                                </button>
+                            ` : ''}
+                            ${(post.status === 'scheduled' || post.status === 'failed') ? `
+                                <button class="btn btn-sm btn-success" onclick="postNow(${post.id})">
+                                    Post Now
+                                </button>
+                            ` : ''}
+                            ${post.status !== 'published' ? `
+                                <button class="btn btn-sm btn-danger" onclick="deletePost(${post.id})">
+                                    Delete
+                                </button>
+                            ` : ''}
+                        `}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function goToPreviousPage() {
+    if (postsState.currentPage > 1) {
+        postsState.currentPage--;
+        renderPostsPage();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+}
+
+function goToNextPage() {
+    if (postsState.currentPage < postsState.totalPages) {
+        postsState.currentPage++;
+        renderPostsPage();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+}
+
+function goToPage(pageNum) {
+    if (pageNum >= 1 && pageNum <= postsState.totalPages) {
+        postsState.currentPage = pageNum;
+        renderPostsPage();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+}
+
+function changePostsPerPage(newLimit) {
+    postsState.postsPerPage = newLimit;
+    postsState.currentPage = 1;
+    postsState.totalPages = Math.ceil(postsState.allPosts.length / postsState.postsPerPage) || 1;
+    
+    // Always show pagination controls
+    if (postsState.allPosts.length > 0) {
+        document.getElementById('paginationControls').style.display = 'flex';
+    } else {
+        document.getElementById('paginationControls').style.display = 'none';
+    }
+    
+    renderPostsPage();
+}
+
+async function loadPosts() {
+    // Kept for backward compatibility
+    return loadAllPosts();
 }
 
 async function loadPosts() {

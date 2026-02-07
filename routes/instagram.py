@@ -137,7 +137,7 @@ def get_instagram_posts():
     Fetch published posts from Instagram with caching.
     
     Query params:
-    - limit: Number of posts to fetch (default: 25)
+    - limit: Number of posts to fetch (default: 25, max: 100)
     - use_cache: Whether to use cached data (default: true)
     - refresh: Force refresh from Instagram (overrides use_cache)
     """
@@ -159,7 +159,10 @@ def get_instagram_posts():
         return jsonify({'error': 'Instagram not connected'}), 400
     
     try:
+        # Allow higher limits for pagination, cap at 100
         limit = request.args.get('limit', 25, type=int)
+        limit = min(max(limit, 1), 100)  # Ensure between 1 and 100
+        
         refresh = request.args.get('refresh', 'false').lower() == 'true'
         use_cache = not refresh and request.args.get('use_cache', 'true').lower() == 'true'
         

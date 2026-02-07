@@ -18,4 +18,22 @@
     <div id="postsLoading" style="text-align: center; padding: 2rem; display: none;">
         <p>Loading posts...</p>
     </div>
+    
+    <!-- Pagination Controls -->
+    <div id="paginationControls" style="display: flex; gap: 1rem; justify-content: center; align-items: center; margin-top: 2rem; flex-wrap: wrap;">
+        <button id="prevPageBtn" class="btn btn-secondary" onclick="goToPreviousPage()">← Previous</button>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <span>Page</span>
+            <input id="currentPageInput" type="number" min="1" value="1" style="width: 60px; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;" onchange="goToPage(parseInt(this.value))">
+            <span>of <span id="totalPagesSpan">1</span></span>
+        </div>
+        <button id="nextPageBtn" class="btn btn-secondary" onclick="goToNextPage()">Next →</button>
+        <select id="postsPerPageSelect" class="form-select" style="width: 120px;" onchange="changePostsPerPage(parseInt(this.value))">
+            <option value="25">25 posts</option>
+            <option value="50">50 posts</option>
+            <option value="100">100 posts</option>
+        </select>
+    </div>
+    
+    <div id="paginationInfo" style="text-align: center; margin-top: 1rem; color: #666; font-size: 0.9rem;"></div>
 </div>
